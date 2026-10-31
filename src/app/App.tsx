@@ -1,3 +1,6 @@
+import {GfxPreview} from "../features/media/GfxPreview";
+import {InterfaceEditor} from "../features/media/InterfaceEditor";
+import {InterfacePreview, interfaceType} from "../features/media/InterfacePreview";
 import {message, setLanguage, t, useLanguage} from "../i18n/index";
 import React, {
     useCallback,
@@ -74,6 +77,7 @@ type OperationProgress = {
 };
 
 export function App() {
+    const [extractionErrors, setExtractionErrors] = useState<string[]>([]);
     const language = useLanguage();
     const [progress, setProgress] = useState<OperationProgress>();
     const [searchProgress, setSearchProgress] = useState<OperationProgress>();
@@ -108,9 +112,34 @@ export function App() {
         [status, setStatus] = useState("Откройте PCK, чтобы начать"),
         [tab, setTab] = useState("text"),
         [newName, setNewName] = useState("");
+    const [dialogTrail, setDialogTrail] = useState<number[]>([]);
+    const interfaceViews = useRef(new Map<string, { selection: number; zoom: number }>());
     const chooseHandler = useRef<(index: number) => void>(() => {
     });
     chooseHandler.current = choose;
+    const startupRequested = useRef(false);
+    const startupEntry = useRef<string | null>(null);
+    useEffect(() => {
+        if (startupRequested.current) return;
+        startupRequested.current = true;
+        void invoke<[string, string] | null>('startup_target').then(async target => {
+            if (!target) return;
+            await run(async () => {
+                const opened = await invoke<Archive>('open_archive', {path: target[0]});
+                startupEntry.current = target[1];
+                setArchive(opened);
+            });
+        }).catch(e => setStatus(String(e)));
+    }, []);
+    useEffect(() => {
+        if (!archive || !startupEntry.current) return;
+        const normalize = (s: string) => s.replace(/\\/g, '/').replace(/^(surfaces|gfx)\//i, '').toLowerCase();
+        const requested = normalize(startupEntry.current);
+        startupEntry.current = null;
+        const index = archive.entries.findIndex(e => normalize(e.name) === requested);
+        if (index < 0) setStatus('Ресурс не найден: ' + requested);
+        else chooseHandler.current(index);
+    }, [archive]);
     const chooseStable = useCallback(
         (index: number) => chooseHandler.current(index),
         [],
@@ -428,7 +457,7 @@ export function App() {
         );
     }
 
-    async function choose(i: number, forcedEncoding?: string) {
+    async function choose(i: number, forcedEncoding?: string, trail?: number[]) {
         if (!(await discard())) return;
         await run(async () => {
             const b = await invoke<number[]>("read_entry", {index: i});
@@ -472,7 +501,7 @@ export function App() {
             enc = forcedEncoding ?? enc;
             setEncoding(enc);
             setTab(
-                !forcedEncoding && mediaType(archive!.entries[i].name)
+                !forcedEncoding && (mediaType(archive!.entries[i].name) || interfaceType(archive!.entries[i].name) || /\.gfx$/i.test(archive!.entries[i].name))
                     ? "preview"
                     : "text",
             );
@@ -481,6 +510,7 @@ export function App() {
             else setText("");
             setPending(false);
             setStatus(archive!.entries[i].name);
+            setDialogTrail(trail ?? [i]);
         });
     }
 
@@ -571,15 +601,17 @@ export function App() {
         if (typeof directory !== "string") return;
         await run(async () => {
             if (pending) await apply();
-            const count = await invoke<number>("extract_archive", {
+            setExtractionErrors([]);
+            const result = await invoke<{ extracted: number; errors: string[] }>("extract_archive", {
                 directory,
             });
             setStatus(
                 "Распаковано " +
-                count.toLocaleString() +
+                result.extracted.toLocaleString() +
                 " файлов в " +
-                directory,
+                directory + "; ошибок: " + result.errors.length,
             );
+            setExtractionErrors(result.errors);
         });
     }
 
@@ -712,7 +744,7 @@ export function App() {
             </Flex>
             <Flex flex="1" overflow="hidden">
                 <Flex
-                    w="390px"
+                    w="390px" className="archive-sidebar-resizable"
                     direction="column"
                     borderRight="1px solid #253044"
                     p="4"
@@ -745,14 +777,22 @@ export function App() {
                 <Flex flex="1" direction="column" p="5" minW="0" gap="4">
                     {entry ? (
                         <>
-                            <Heading size="md" wordBreak="break-all">
+                            <Flex gap="3" align="center" wrap="wrap"><Heading size="md" wordBreak="break-all">
                                 {entry.name}
-                            </Heading>
+                            </Heading><Badge>{entry.size.toLocaleString()} bytes</Badge><Badge>{entry.packed < entry.size ? "ZLIB" : "RAW"}</Badge></Flex>
+                            {interfaceType(entry.name) && <Flex gap="2" align="center" wrap="wrap">
+                                {dialogTrail.length > 1 &&
+                                    <Button size="sm" disabled={busy || searching} onClick={() => {
+                                        const path = dialogTrail.slice(0, -1);
+                                        void choose(path[path.length - 1], undefined, path);
+                                    }}>← Назад</Button>}
+                                {dialogTrail.map((index, position) => <span key={`${position}:${index}`}><button
+                                    disabled={busy || searching || position === dialogTrail.length - 1}
+                                    onClick={() => void choose(index, undefined, dialogTrail.slice(0, position + 1))}>{archive?.entries[index]?.name.split(/[\\/]/).pop()}</button>
+                                    {position < dialogTrail.length - 1 ? ' / ' : ''}</span>)}
+                            </Flex>}
                             <Flex gap="3" align="center" wrap="wrap">
-                                <Badge>
-                                    {entry.size.toLocaleString()} bytes
-                                </Badge>
-                                {mediaType(entry.name) && (
+                                {(mediaType(entry.name) || interfaceType(entry.name) || /\.gfx$/i.test(entry.name)) && (
                                     <Button
                                         size="sm"
                                         onClick={() => setTab("preview")}
@@ -760,9 +800,6 @@ export function App() {
                                         {t("Предпросмотр")}
                                     </Button>
                                 )}
-                                <Badge>
-                                    {entry.packed < entry.size ? "ZLIB" : "RAW"}
-                                </Badge>
                                 <Button
                                     size="sm"
                                     disabled={busy || searching}
@@ -798,7 +835,36 @@ export function App() {
                                     <option value="utf-16be">UTF-16 BE</option>
                                 </select>
                             </Flex>
-                            {tab === "preview" && mediaType(entry.name) ? (
+                            {tab === "preview" && /\.gfx$/i.test(entry.name) ?
+                                <GfxPreview file={entry.name} bytes={bytes}
+                                            entries={archive?.entries ?? EMPTY_ENTRIES}/> : tab === "preview" && interfaceType(entry.name) ? (
+                                    <InterfaceEditor fileName={entry.name} key={`${archive?.path}:${selected}`}
+                                                     initialView={interfaceViews.current.get(`${archive?.path}:${entry.name}`)}
+                                                     onViewChange={view => {
+                                                         interfaceViews.current.set(`${archive?.path}:${entry.name}`, view);
+                                                     }} onOpenDialog={file => {
+                                        if (busy || searching || !archive) return;
+                                        const normalize = (path: string) => path.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+                                        const requested = normalize(file);
+                                        const current = normalize(entry.name);
+                                        const directory = current.slice(0, current.lastIndexOf("/") + 1);
+                                        const candidates = [directory + requested, requested, "interfaces/" + requested];
+                                        let index = -1;
+                                        for (const path of candidates) {
+                                            index = archive.entries.findIndex(item => normalize(item.name) === path);
+                                            if (index >= 0) break;
+                                        }
+                                        if (index < 0) {
+                                            setStatus("Не найден DialogFile: " + file);
+                                            return;
+                                        }
+                                        void choose(index, undefined, [...(dialogTrail.length ? dialogTrail : [selected!]), index]);
+                                    }} text={text} entries={archive?.entries ?? EMPTY_ENTRIES}
+                                                     disabled={busy || searching} onChange={value => {
+                                        setText(value);
+                                        setPending(true);
+                                    }}/>
+                                ) : tab === "preview" && mediaType(entry.name) ? (
                                 <MediaPreview
                                     key={selected}
                                     name={entry.name}
@@ -966,7 +1032,13 @@ export function App() {
                 ) : (
                     message(status)
                 )}
-            </Box>
+            </Box> {extractionErrors.length > 0 && <Box px="5" pb="3">
+            <details>
+                <summary>{t("Ошибки распаковки:")} {extractionErrors.length}</summary>
+                <Box maxH="160px" overflow="auto" fontSize="xs"
+                     wordBreak="break-all">{extractionErrors.map((error, index) => <Text
+                    key={index}>{message(error)}</Text>)}</Box></details>
+        </Box>}
         </Flex>
     );
 }

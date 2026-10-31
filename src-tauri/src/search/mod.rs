@@ -110,7 +110,7 @@ pub(super) async fn search_contents(
                 if let Some(data) = &entry.data { return Ok(data.clone()); }
                 if entry.len > 256 * 1024 * 1024 { return Err("Лимит поиска: 256 MiB на файл".into()); }
                 let offset = entry.offset as u64;
-                let len = entry.packed as usize;
+                let len = entry.packed.min(entry.len) as usize;
                 let first = if offset < SPLIT { len.min((SPLIT - offset) as usize) } else { 0 };
                 let mut packed = vec![0; len];
                 if first > 0 {

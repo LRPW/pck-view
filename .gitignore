@@ -6,3 +6,16 @@ target/
 
 /.logs/
 /release/
+
+# Only the native host wrapper may be tracked; engine sources stay external
+/runtimes/
+*.cpp
+*.cxx
+*.cc
+*.h
+*.hpp
+*.lib
+*.pdb
+*.obj
+
+!/native-gfx/main.cpp

@@ -1,5 +1,9 @@
 #[path = "search/mod.rs"]
 mod search;
+#[path = "native_gfx.rs"]
+mod native_gfx;
+#[path = "ui_fonts.rs"]
+mod ui_fonts;
 use search::SearchControl;
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use serde::Serialize;
@@ -237,7 +241,7 @@ impl Archive {
         if preview_limit && e.len > 256 * 1024 * 1024 {
             return Err("Лимит просмотра/экспорта: 256 MiB на файл".into());
         }
-        let b = Self::read_at(&self.path, e.offset as u64, e.packed as usize)?;
+        let b = Self::read_at(&self.path, e.offset as u64, e.packed.min(e.len) as usize)?;
         self.decode_entry(e, b)
     }
     fn decode_entry(&self, e: &Entry, mut b: Vec<u8>) -> Result<Vec<u8>> {
@@ -353,6 +357,40 @@ fn compress(b: &[u8]) -> Result<Vec<u8>> {
 }
 #[derive(Default, Clone)]
 struct App(Arc<Mutex<Option<Archive>>>);
+#[derive(Default, Clone)]
+struct SurfaceCache(Arc<Mutex<Option<Archive>>>);
+
+fn read_surface_impl(name: &str, state: &App, cache: &SurfaceCache) -> Result<Vec<u8>> {
+    let path = state.0.lock().map_err(err)?.as_ref()
+        .ok_or("Откройте архив")?.path.clone();
+    let parent = path.parent().ok_or("Нет каталога архива")?;
+    let archive_name = if name.to_lowercase().ends_with(".gfx") || name.replace('\\', "/").to_lowercase().starts_with("gfx/") { "gfx.pck" } else { "surfaces.pck" };
+    let surface_path = std::fs::read_dir(parent).map_err(err)?
+        .filter_map(|entry| entry.ok())
+        .find(|entry| entry.file_name().to_string_lossy().eq_ignore_ascii_case(archive_name))
+        .ok_or_else(|| format!("Рядом с открытым архивом нет {archive_name}"))?.path();
+    let mut guard = cache.0.lock().map_err(err)?;
+    if guard.as_ref().map(|a| &a.path) != Some(&surface_path) {
+        *guard = None;
+        *guard = Some(Archive::open_progress(surface_path, &|_, _, _| {})?);
+    }
+    let archive = guard.as_ref().ok_or("Не удалось открыть surfaces.pck")?;
+    let normalize = |s: &str| s.replace('\\', "/").trim_start_matches('/').to_lowercase();
+    let requested = normalize(name);
+    let relative = requested.strip_prefix("surfaces/").or_else(|| requested.strip_prefix("gfx/")).unwrap_or(&requested);
+    let index = archive.entries.iter().position(|entry| {
+        let key = normalize(&entry.name);
+        key.strip_prefix("surfaces/").or_else(|| key.strip_prefix("gfx/")).unwrap_or(&key) == relative
+    }).ok_or_else(|| format!("Текстура не найдена в surfaces.pck: {name}"))?;
+    archive.data(index)
+}
+
+#[tauri::command]
+async fn read_surface_texture(name: String, state: tauri::State<'_, App>, cache: tauri::State<'_, SurfaceCache>) -> Result<Vec<u8>> {
+    let state = state.inner().clone();
+    let cache = cache.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || read_surface_impl(&name, &state, &cache)).await.map_err(err)?
+}
 fn read_entry_impl(index: usize, state: &App) -> Result<Vec<u8>> {
     state
         .0
@@ -613,23 +651,55 @@ async fn open_search_window(app: tauri::AppHandle) -> Result<()> {
     }
     Ok(())
 }
+#[tauri::command]
+async fn open_resource_window(name: String, state: tauri::State<'_, App>) -> Result<()> {
+    let current = state.0.lock().map_err(err)?.as_ref().ok_or("Откройте архив")?.path.clone();
+    let parent = current.parent().ok_or("Нет каталога архива")?;
+    let normalized = name.replace('\\', "/").to_lowercase();
+    let extension = normalized.rsplit('.').next().unwrap_or("");
+    let archive_name = if extension == "gfx" || normalized.starts_with("gfx/") { "gfx.pck" } else if matches!(extension, "wav" | "mp3" | "ogg") { "sfx.pck" } else if matches!(extension, "ecm" | "smd" | "ski" | "skn" | "bon") { "models.pck" } else if matches!(extension, "hlsl" | "vsh" | "psh" | "fx") { "shaders.pck" } else { "surfaces.pck" };
+    let path = std::fs::read_dir(parent).map_err(err)?.filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(archive_name))
+        .ok_or_else(|| format!("Рядом нет {archive_name}"))?.path();
+    std::process::Command::new(std::env::current_exe().map_err(err)?)
+        .arg("--open-archive").arg(path).arg("--select-entry").arg(name)
+        .spawn().map_err(err)?;
+    Ok(())
+}
+#[tauri::command]
+fn startup_target() -> Option<(String, String)> {
+    let args: Vec<String> = std::env::args().collect();
+    let path = args.windows(2).find(|w| w[0] == "--open-archive")?.get(1)?.clone();
+    let name = args.windows(2).find(|w| w[0] == "--select-entry")?.get(1)?.clone();
+    Some((path, name))
+}
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                native_gfx::shutdown();
                 use tauri::Manager;
                 window.app_handle().exit(0);
             }
         })
         .manage(App::default())
+        .manage(SurfaceCache::default())
         .manage(SearchControl::default())
         .invoke_handler(tauri::generate_handler![
             open_search_window,
+            open_resource_window,
+            startup_target,
+            ui_fonts::list_ui_fonts,
+            ui_fonts::read_ui_font,
+            native_gfx::native_gfx_create,
+            native_gfx::native_gfx_frame,
+            native_gfx::native_gfx_close,
             search::search_contents,
             search::cancel_search,
             open_archive,
             read_entry,
+            read_surface_texture,
             edit_entry,
             save_archive,
             import_file,
@@ -689,64 +759,107 @@ fn reject_link(path: &Path) -> Result<()> {
     }
     Ok(())
 }
+#[derive(Serialize)]
+struct ExtractionResult {
+    extracted: usize,
+    errors: Vec<String>,
+}
 fn extract_all_impl(
     archive: &Archive,
     directory: &Path,
-    progress: &dyn Fn(&str, usize, usize),
-) -> Result<usize> {
+    progress: &(dyn Fn(&str, usize, usize) + Sync),
+) -> Result<ExtractionResult> {
+    use std::sync::{atomic::{AtomicUsize, Ordering}, Condvar};
     reject_link(directory)?;
     let root = std::fs::canonicalize(directory).map_err(err)?;
     let mut seen = HashSet::new();
-    let paths = archive
-        .entries
-        .iter()
-        .map(|entry| {
-            let rel = archive_relative(&entry.name)?;
-            if !seen.insert(entry.name.replace('/', "\\").to_lowercase()) {
-                return Err(format!("Повторяющийся путь: {}", entry.name));
-            }
-            Ok(rel)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    for (i, rel) in paths.iter().enumerate() {
-        if i % 32 == 0 {
-            progress(&archive.entries[i].name, i, paths.len());
+    let paths = archive.entries.iter().map(|entry| {
+        let rel = archive_relative(&entry.name)?;
+        if !seen.insert(entry.name.replace('/', "\\").to_lowercase()) {
+            return Err(format!("Повторяющийся путь: {}", entry.name));
         }
-        let mut parent = root.clone();
-        for component in rel.parent().unwrap_or(Path::new("")).components() {
-            parent.push(component);
-            if !parent.exists() {
-                std::fs::create_dir(&parent).map_err(err)?;
-            }
-            reject_link(&parent)?;
-        }
+        Ok(rel)
+    }).collect::<Result<Vec<_>>>()?;
+    // Refuse overwriting the source archive before starting any workers.
+    let sources: Vec<_> = [archive.path.clone(), archive.path.with_extension("pkx")]
+        .iter().filter_map(|path| std::fs::canonicalize(path).ok()).collect();
+    for rel in &paths {
         let target = root.join(rel);
-        if std::fs::symlink_metadata(&target).is_ok() {
-            reject_link(&target)?;
-            let existing = std::fs::canonicalize(&target).map_err(err)?;
-            if [archive.path.clone(), archive.path.with_extension("pkx")]
-                .iter()
-                .any(|p| {
-                    std::fs::canonicalize(p)
-                        .map(|p| p == existing)
-                        .unwrap_or(false)
-                })
-            {
+        if let Ok(existing) = std::fs::canonicalize(&target) {
+            if sources.contains(&existing) {
                 return Err("Распаковка не может перезаписать исходный PCK/PKX".into());
             }
         }
-        let data = archive
-            .data_with_limit(i, false)
-            .map_err(|e| format!("{}: {e}", archive.entries[i].name))?;
-        let mut temp = tempfile::NamedTempFile::new_in(&parent).map_err(err)?;
-        temp.write_all(&data).map_err(err)?;
-        temp.as_file().sync_all().map_err(err)?;
-        temp.persist(&target).map_err(err)?;
-        if (i + 1) % 32 == 0 || i + 1 == paths.len() {
-            progress(&archive.entries[i].name, i + 1, paths.len());
-        }
     }
-    Ok(paths.len())
+    let next = AtomicUsize::new(0);
+    let errors = Mutex::new(Vec::<(usize, String)>::new());
+    let completed = Mutex::new((0usize, std::time::Instant::now()));
+    let budget = (Mutex::new(0u64), Condvar::new());
+    const MEMORY_BUDGET: u64 = 512 * 1024 * 1024;
+    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(4).min(paths.len());
+    progress("Распаковка", 0, paths.len());
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..workers {
+            handles.push(scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= paths.len() { break; }
+                    let entry = &archive.entries[i];
+                    let weight = (entry.len as u64 + entry.packed.min(entry.len) as u64).max(1);
+                    {
+                        let mut used = budget.0.lock().unwrap();
+                        while *used > 0 && used.saturating_add(weight) > MEMORY_BUDGET {
+                            used = budget.1.wait(used).unwrap();
+                        }
+                        *used += weight;
+                    }
+                    let result = (|| -> Result<()> {
+                        let rel = &paths[i];
+                        let mut parent = root.clone();
+                        for component in rel.parent().unwrap_or(Path::new("")).components() {
+                            parent.push(component);
+                            match std::fs::create_dir(&parent) {
+                                Ok(()) => {},
+                                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+                                Err(error) => return Err(err(error)),
+                            }
+                            reject_link(&parent)?;
+                        }
+                        let target = root.join(rel);
+                        if std::fs::symlink_metadata(&target).is_ok() { reject_link(&target)?; }
+                        let data = archive.data_with_limit(i, false)?;
+                        let mut temp = tempfile::NamedTempFile::new_in(&parent).map_err(err)?;
+                        temp.write_all(&data).map_err(err)?;
+                        // No per-resource disk barrier: extraction is not an archive commit.
+                        temp.persist(&target).map_err(err)?;
+                        Ok(())
+                    })();
+                    {
+                        let mut used = budget.0.lock().unwrap();
+                        *used -= weight;
+                        budget.1.notify_all();
+                    }
+                    if let Err(error) = result {
+                        errors.lock().unwrap().push((i, format!("{}: {error}", entry.name)));
+                    }
+                    let mut done = completed.lock().unwrap();
+                    done.0 += 1;
+                    if done.0 == paths.len() || done.0 % 32 == 0 || done.1.elapsed().as_millis() >= 100 {
+                        progress(&entry.name, done.0, paths.len());
+                        done.1 = std::time::Instant::now();
+                    }
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().map_err(|_| "Ошибка потока распаковки".to_string())?;
+        }
+        Ok::<(), String>(())
+    })?;
+    let mut errors = errors.into_inner().map_err(err)?;
+    errors.sort_by_key(|(index, _)| *index);
+    Ok(ExtractionResult { extracted: paths.len() - errors.len(), errors: errors.into_iter().map(|(_, error)| error).collect() })
 }
 fn collect_files(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     reject_link(directory)?;
@@ -855,7 +968,7 @@ async fn extract_archive(
     directory: String,
     state: tauri::State<'_, App>,
     app: tauri::AppHandle,
-) -> Result<usize> {
+) -> Result<ExtractionResult> {
     let state = state.inner().clone();
     background(app, "Распаковка", move |app| {
         let guard = state.0.lock().map_err(err)?;

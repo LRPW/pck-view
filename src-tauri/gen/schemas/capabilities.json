@@ -5,7 +5,8 @@
     "local": true,
     "windows": [
       "main",
-      "search"
+      "search",
+      "resource-*"
     ],
     "permissions": [
       "core:default",

@@ -32,6 +32,9 @@ export function useLanguage() {
 }
 
 const dictionary: Record<string, string> = {
+    'Ошибки распаковки:': 'Extraction errors:',
+    '; ошибок: ': '; errors: ',
+    'Ошибка потока распаковки': 'Extraction worker failed',
     'Да': 'Yes',
     'Отмена': 'Cancel',
     'Поиск в файлах': 'Find in Files',

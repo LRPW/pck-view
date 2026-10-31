@@ -91,6 +91,10 @@ Click **Extract all** and select a destination folder. Resource paths are preser
 files at matching paths are replaced; other files in the folder are left in place. If an error occurs, files already
 extracted remain on disk.
 
+Extraction uses up to four worker threads with a limit on concurrently processed data. A resource read or write error
+does not stop other files; errors are listed in an expandable report. Uncompressed entries whose stored-size field
+exceeds their original length are read using the original length.
+
 ### Packing
 
 Click **Pack into PCK**, select a resource folder, and choose an archive destination **outside that folder**. The
@@ -152,35 +156,6 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 Some backend tests create and replace temporary files and require write access. The local game installation check is
 ignored by default.
-
-## GitHub Actions and Releases
-
-Workflow: [`.github/workflows/pckview.yml`](.github/workflows/pckview.yml). The directory containing this README must be
-the GitHub repository root.
-
-- Branch pushes, pull requests, and manual runs execute checks and build Windows x64.
-- Frontend dependencies use `yarn.lock`; Rust dependencies use `Cargo.lock`. The build is preceded by `npm test` and
-  Rust tests.
-- The EXE and `SHA256SUMS.txt` are available in the `pckview-windows-x64` artifact for 14 days.
-- Pushing a `pckview-v*` or `v*` tag publishes the EXE and checksum to GitHub Releases after a successful build.
-  Versions with a suffix, such as `0.2.0-beta.1`, are marked as prereleases.
-- No additional token is required: the workflow uses the built-in `GITHUB_TOKEN`. Publishing permissions are limited to
-  a separate job.
-
-Before releasing, synchronize `version` in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
-After changing the Rust version, refresh `Cargo.lock`, for example with
-`cargo check --manifest-path src-tauri/Cargo.toml`, and commit the changes. The tag version must match the application
-version.
-
-Publishing the current version:
-
-```powershell
-git tag pckview-v0.1.0
-git push origin pckview-v0.1.0
-```
-
-Release filename: `LRPW-PCK-View-0.1.0-windows-x64.exe`. This is an executable without an installer; WebView2 Runtime is
-required to run it.
 
 ## Format and limitations
 

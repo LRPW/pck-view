@@ -1,0 +1,16 @@
+# Local build products and copied runtime dependencies
+/out/
+*.obj
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.ipdb
+*.iobj
+*.exp
+*.lib
+
+# Engine logs and smoke-test captures (including older layouts)
+/Logs/
+*.log
+/smoke-*.bmp
