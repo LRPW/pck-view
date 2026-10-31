@@ -1,0 +1,20 @@
+{
+  "main": {
+    "identifier": "main",
+    "description": "",
+    "local": true,
+    "windows": [
+      "main",
+      "search"
+    ],
+    "permissions": [
+      "core:default",
+      "core:window:allow-hide",
+      "core:window:allow-set-title",
+      "core:window:allow-set-focus",
+      "dialog:allow-open",
+      "dialog:allow-save",
+      "dialog:allow-confirm"
+    ]
+  }
+}
