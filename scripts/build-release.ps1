@@ -1,28 +1,12 @@
-cd D:\PerfectWorld\client_source\rust-src\pckview
+Set-Location -LiteralPath (Join-Path $PSScriptRoot '..') -ErrorAction Stop
 
-# Нативный проигрыватель — требует VS2022 и DirectX SDK June 2010
-.\native-gfx\build.cmd
-
-# Подготовить готовые бинарники для упаковки
-New-Item -ItemType Directory -Force runtimes\native-gfx | Out-Null
-
-$files = @(
-    'native-gfx.exe',
-    'ImmWrapper.dll',
-    'ifc22.dll',
-    'zlibwapi.dll',
-    'msvcp140.dll',
-    'vcruntime140.dll',
-    'd3dx9_43.dll'
-)
-foreach ($file in $files) {
-    Copy-Item "native-gfx\out\$file" runtimes\native-gfx -Force
-}
-
-# PCK View
+# Tauri's beforeBuildCommand builds the native runtime.
 yarn install --frozen-lockfile
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 npm test
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 npm run tauri build -- --ci --no-bundle
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # Проверка и упаковка
 .\scripts\check-public-source.ps1

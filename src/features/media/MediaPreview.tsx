@@ -10,11 +10,12 @@ const formats: Record<string, string> = {
     mp4: 'video/mp4', webm: 'video/webm', ogv: 'video/ogg',
 };
 
-export function mediaType(name: string) {
-    return formats[name.split('.').pop()?.toLowerCase() ?? ''];
+export function mediaType(name: string): string {
+    const extension = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
+    return Object.hasOwn(formats, extension) ? formats[extension] : '';
 }
 
-export function MediaPreview({name, bytes}: { name: string; bytes: number[] }) {
+export function MediaPreview({name, bytes, thumbnail = false}: { name: string; bytes: number[]; thumbnail?: boolean }) {
     useLanguage();
     const mime = mediaType(name);
     const [url, setUrl] = useState('');
@@ -75,6 +76,9 @@ export function MediaPreview({name, bytes}: { name: string; bytes: number[] }) {
             if (src) URL.revokeObjectURL(src);
         };
     }, [bytes, mime]);
+    if (thumbnail) return url && !error
+        ? <img className="resource-thumbnail-image" src={url} alt={name} onError={() => setError(true)}/>
+        : null;
     if (!url && !error) return <div className="media-preview"><p>{t("Загрузка текстуры…")}</p></div>;
     return <div className="media-preview">
         {error ? <p>{t("Не удалось открыть файл. Формат или кодек не поддерживается, либо файл повреждён.")}</p>

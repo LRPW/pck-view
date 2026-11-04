@@ -17,5 +17,5 @@ target/
 *.lib
 *.pdb
 *.obj
-
+*.log
 !/native-gfx/main.cpp

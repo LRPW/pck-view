@@ -1,8 +1,10 @@
+import {flexLayout} from './flex-layout';
+import {uiTextStyle} from './ui-text-style';
 import {useGameFontFamily} from "./GameFonts";
 import {ResourceLoading} from "./ResourceLoading";
 import {GfxPreview} from "./GfxPreview";
 import {useEffect, useState} from 'react';
-import {invoke} from '@tauri-apps/api/core';
+import {useResourceInvoke} from '../editor/resource-context';
 import {attr, TextureFrame, useInterfaceTextures} from './InterfaceTextures';
 
 const normalize = (name: string) => name.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
@@ -28,6 +30,7 @@ function decode(bytes: Uint8Array) {
 export function SubDialogCanvas({file, parentFile = '', entries, ancestors = []}: {
     file: string; parentFile?: string; entries: { name: string }[]; ancestors?: string[];
 }) {
+    const invoke = useResourceInvoke();
     const fontFamily = useGameFontFamily();
     const [model, setModel] = useState<Element | null>(null);
     const [error, setError] = useState('');
@@ -71,25 +74,26 @@ export function SubDialogCanvas({file, parentFile = '', entries, ancestors = []}
     }}>
         {loading && <ResourceLoading label="Загрузка текстур" completed={progress.completed} total={progress.total}/>}
         <TextureFrame element={model} textures={textures}/>
-        {Array.from(model.children).filter(e => attr(e, 'Name')).map((e, i) => {
+        {[...flexLayout(model).values()].map((box, i) => {
+            const e = box.element;
             const text = Array.from(e.children).find(c => c.tagName.toUpperCase() === 'TEXT');
             const nested = e.tagName.toUpperCase() === 'SUBDIALOG';
             return <span key={i} style={{
                 position: 'absolute',
-                left: num(e, 'x', 0),
-                top: num(e, 'y', 0),
-                width: attr(e, 'Width') ? Math.max(0, num(e, 'Width', 0)) : 'max-content',
-                height: Math.max(0, num(e, 'Height', 22)),
+                left: box.x,
+                top: box.y,
+                width: box.width,
+                height: box.height,
                 overflow: nested ? 'hidden' : 'visible',
                 fontSize: text ? num(text, 'FontSize', 12) : 12,
                 fontFamily: text ? fontFamily(attr(text, 'FontName')) : undefined,
                 whiteSpace: 'nowrap',
                 lineHeight: 1,
                 textAlign: /BUTTON/.test(e.tagName) ? 'center' : 'left',
-                color: '#eef4ff'
+                ...uiTextStyle(text)
             }}>
                 <TextureFrame element={e}
-                              textures={textures}/>{Array.from(e.getElementsByTagName("*")).filter(r => r.tagName.toUpperCase() === "GFX").map((r, n) =>
+                              textures={textures}/>{(e.tagName.toUpperCase() === 'DIV' ? [] : Array.from(e.getElementsByTagName("*"))).filter(r => r.tagName.toUpperCase() === "GFX").map((r, n) =>
                 <GfxPreview key={n} file={r.getAttribute("FileName") ?? ""} entries={entries} embedded/>)}
                 {nested && attr(e, 'DialogFile') &&
                     <SubDialogCanvas file={attr(e, 'DialogFile')} parentFile={resolved} entries={entries}

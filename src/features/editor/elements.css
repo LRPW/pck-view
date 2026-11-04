@@ -1,0 +1,478 @@
+.elements-editor {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    flex-direction: column;
+    background: #0b1018;
+    color: #dae3ef;
+    font: 14px system-ui
+}
+
+.elements-editor header {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 18px;
+    border-bottom: 1px solid #253044
+}
+
+.elements-editor header strong {
+    font-size: 22px;
+    margin-right: auto;
+    color: #63e2c5
+}
+
+.elements-editor header span {
+    font-size: 14px;
+    color: #97a7bf
+}
+
+.elements-editor button {
+    padding: 8px 12px;
+    background: #182436;
+    border: 1px solid #2b3d55;
+    border-radius: 5px;
+    cursor: pointer;
+    text-align: left
+}
+
+.elements-editor button:hover {
+    background: #263d53
+}
+
+.elements-editor button:disabled {
+    opacity: .4;
+    cursor: default
+}
+
+.elements-editor input, .elements-editor textarea {
+    background: #101b29;
+    color: inherit;
+    border: 1px solid #34465e;
+    border-radius: 4px;
+    padding: 8px;
+    min-width: 0
+}
+
+.elements-editor input:focus, .elements-editor textarea:focus {
+    outline: 1px solid #63e2c5
+}
+
+.elements-editor main {
+    display: flex;
+    flex: 1;
+    min-height: 0
+}
+
+.elements-editor aside {
+    width: 270px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border-right: 1px solid #253044
+}
+
+.elements-editor nav {
+    overflow: auto;
+    flex: 1
+}
+
+.elements-editor nav button {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    gap: 8px;
+    font-size: 11px;
+    margin-bottom: 4px;
+    overflow-wrap: anywhere
+}
+
+.elements-editor small {
+    color: #8eabc0
+}
+
+.elements-editor .selected {
+    background: #17473f;
+    border-color: #63e2c5
+}
+
+.elements-records {
+    width: 290px;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    gap: 10px;
+    border-right: 1px solid #253044
+}
+
+.elements-list {
+    flex: 1;
+    overflow: auto
+}
+
+.elements-list button {
+    display: flex;
+    width: 100%;
+    gap: 10px;
+    margin-bottom: 4px
+}
+
+.elements-list code {
+    color: #63e2c5;
+    min-width: 50px
+}
+
+.elements-list span {
+    overflow-wrap: anywhere
+}
+
+.elements-records footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between
+}
+
+.elements-editor article {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 10px
+}
+
+.elements-field-toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap
+}
+
+.elements-field-toolbar strong {
+    margin-right: auto
+}
+
+.elements-fields {
+    overflow: auto;
+    flex: 1
+}
+
+.elements-field {
+    display: grid;
+    grid-template-columns:minmax(0, min(var(--elements-field-width), 60%)) 7px minmax(0, 1fr);
+    gap: 5px;
+    padding: 8px;
+    border-bottom: 1px solid #1d2a3b;
+    align-items: start
+}
+
+.elements-field > span {
+    overflow-wrap: anywhere
+}
+
+.elements-fields small {
+    display: block;
+    font: 11px monospace;
+    margin-top: 4px
+}
+
+.elements-fields textarea {
+    resize: vertical;
+    font: 13px Consolas, monospace;
+    width: 100%
+}
+
+.elements-fields .modified {
+    background: #15332e
+}
+
+.elements-path, .elements-status {
+    padding: 10px 18px;
+    background: #111b29;
+    font-size: 12px;
+    overflow-wrap: anywhere
+}
+
+.elements-path span {
+    float: right;
+    color: #8eabc0
+}
+
+.elements-error {
+    background: #52282e;
+    color: #ffccd0;
+    padding: 12px;
+    white-space: pre-wrap
+}
+
+.elements-empty {
+    margin: auto;
+    text-align: center;
+    color: #a8b8ca
+}
+
+.elements-empty p, .elements-hint {
+    font-size: 12px;
+    color: #8599b1
+}
+
+.elements-editor main > aside, .elements-editor main > .elements-records {
+    min-width: 90px;
+    border-right: 0
+}
+
+.elements-editor article {
+    min-width: 155px;
+    padding: 10px;
+    overflow: auto
+}
+
+.elements-editor main {
+    overflow-x: auto
+}
+
+.elements-field .column-divider {
+    align-self: stretch
+}
+
+.elements-editor main {
+    overflow-x: auto;
+}
+
+.elements-editor aside, .elements-records {
+    min-width: 110px;
+    border-right: 0;
+}
+
+.elements-editor article {
+    min-width: 160px;
+}
+
+.elements-list button, .elements-list-columns {
+    display: grid;
+    grid-template-columns: minmax(0, min(var(--elements-id-width), 60%)) 7px minmax(0, 1fr);
+    padding: 8px 12px;
+    gap: 4px;
+    border: 1px solid transparent;
+}
+
+.elements-list button {
+    border-color: #2b3d55;
+}
+
+.elements-list-columns {
+    position: sticky;
+    top: 0;
+    background: #0b1018;
+}
+
+.elements-list code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.elements-list button > span {
+    grid-column: 3;
+}
+
+.elements-field-value {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.elements-field-value > textarea {
+    flex: 1;
+}
+
+.elements-field-value > .resource-picker-button {
+    flex: none;
+    padding: 6px;
+}
+
+.resource-picker-button > svg {
+    display: block;
+}
+
+.resource-thumbnail {
+    flex: none;
+    width: 40px;
+    min-height: 1px;
+}
+
+.resource-thumbnail-image {
+    display: block;
+    max-width: 100%;
+    max-height: 36px;
+    object-fit: contain;
+}
+
+.resource-picker {
+    width: min(640px, calc(100vw - 32px));
+    height: min(640px, calc(100vh - 32px));
+    margin: auto;
+    padding: 0;
+    color: inherit;
+    background: #101924;
+    border: 1px solid #34465e;
+    border-radius: 8px;
+}
+
+.resource-picker::backdrop {
+    background: rgb(0 0 0 / 55%);
+}
+
+.resource-picker-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    height: 100%;
+    padding: 12px;
+}
+
+.resource-picker-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.resource-thumbnail {
+    order: -1;
+}
+
+.elements-field-value > select {
+    flex: 1;
+    min-width: 0;
+}
+
+.shop-subcategories {
+    padding-inline-start: 12px;
+}
+
+.shop-category-names > summary {
+    cursor: pointer;
+    padding-block: 6px;
+}
+
+.shop-slots {
+    margin-top: 12px;
+}
+
+.shop-slots .shop-slot-tab {
+    position: relative;
+}
+
+.shop-slot-tab::after {
+    content: "";
+    position: absolute;
+    inset-inline: 4px;
+    bottom: 0;
+    height: 3px;
+    background: var(--slot-match-color, transparent);
+    border-radius: 2px;
+}
+
+.shop-slots .shop-slot-tab[data-selected] {
+    background: #17473f;
+    border-color: #63e2c5;
+}
+
+.shop-slot-panel {
+    padding-block-start: 6px;
+}
+
+.shop-slot-input {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.shop-slot-input > input {
+    max-width: 100%;
+}
+
+.shop-day-mask {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+}
+
+.shop-day-mask label {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.shop-items button, .shop-items .elements-list-columns {
+    grid-template-columns: 24px minmax(0, min(var(--elements-id-width), 45%)) 7px minmax(0, 1fr);
+    align-items: center;
+}
+
+.shop-items button > .shop-inventory-icon {
+    grid-column: 1;
+}
+
+.shop-items button > span:last-child {
+    grid-column: 4;
+}
+
+.shop-items .elements-list-columns > .column-divider {
+    align-self: stretch;
+}
+
+.shop-inventory-icon {
+    width: 24px;
+    height: 24px;
+    display: block;
+    background-repeat: no-repeat;
+}
+
+.shop-npc-links {
+    display: grid;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+.shop-npc-links > div {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.shop-npc-links input {
+    flex: 1;
+}
+
+.shop-npc-links .resource-picker-button {
+    flex: none;
+    padding: 6px;
+}
+
+.shop-description {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: 6px;
+}
+
+.shop-description-fallback {
+    min-width: 0;
+    padding: 6px;
+    border: 1px solid #34465e;
+    border-radius: 4px;
+}
+
+.shop-description-fallback > div {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 240px;
+    overflow: auto;
+}

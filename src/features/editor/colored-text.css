@@ -1,0 +1,71 @@
+.task-formatted-input {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.task-color-toolbar {
+    display: flex;
+}
+
+.task-colored-field {
+    position: relative;
+    min-width: 0;
+    color: #e2e8f0;
+    background: #101b29;
+    border-radius: 4px;
+}
+
+.task-colored-field > input, .task-colored-field > textarea, .task-color-mirror {
+    box-sizing: border-box;
+    font: inherit;
+    line-height: 1.45;
+    padding: 7px;
+    letter-spacing: inherit;
+    tab-size: 8;
+}
+
+.tasks-editor .task-colored-field > input, .tasks-editor .task-colored-field > textarea, .elements-editor .task-colored-field > textarea {
+    position: relative;
+    display: block;
+    width: 100%;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    caret-color: #e2e8f0;
+    background: transparent;
+    border: 1px solid #34465e;
+    border-radius: 4px;
+}
+
+.task-colored-field > input::selection, .task-colored-field > textarea::selection {
+    color: transparent;
+    background: rgb(75 184 165 / 35%);
+}
+
+.task-color-mirror {
+    position: absolute;
+    inset: 1px;
+    z-index: 1;
+    overflow: hidden;
+    white-space: pre;
+    pointer-events: none;
+}
+
+.task-color-placeholder {
+    color: #98afc3;
+}
+
+.task-colored-field.multiline > textarea, .task-colored-field.multiline > .task-color-mirror {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+.elements-field-value > .task-formatted-input {
+    flex: 1;
+}
+
+.elements-editor .task-colored-field > textarea,
+.elements-editor .task-color-mirror {
+    font: inherit;
+    line-height: 1.45;
+}

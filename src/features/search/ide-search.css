@@ -1,0 +1,111 @@
+.ide-find form {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border-bottom: 1px solid #253044;
+    background: #101924;
+}
+
+.ide-find-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+}
+
+.ide-find-heading {
+    justify-content: space-between;
+}
+
+.ide-find-heading label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ide-find-heading input {
+    width: 180px;
+}
+
+.ide-find-row > span, .ide-find-results span, .ide-find-results code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ide-find form button {
+    color: #dae3ef;
+    background: #182436;
+    border-color: #34465e;
+}
+
+.ide-find form button:hover:not(:disabled) {
+    background: #263d53;
+}
+
+.ide-find form button[aria-pressed=true] {
+    color: #baf5e8;
+    background: #163d39;
+    border-color: #63e2c5;
+}
+
+.ide-find form button:disabled {
+    color: #a1b0c3;
+    opacity: .65;
+}
+
+.ide-find input::placeholder {
+    color: #98afc3;
+}
+
+.ide-find-scope {
+    flex-wrap: wrap;
+}
+
+.ide-find-scope select {
+    max-width: 220px;
+}
+
+.ide-find-scope input {
+    flex: 1;
+    min-width: 160px;
+}
+
+.ide-find-results {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+.ide-find-results > button:has(code), .ide-find-columns {
+    display: grid;
+    grid-template-columns: minmax(0, min(var(--find-file-width), 70%)) 7px minmax(0, 1fr);
+    width: 100%;
+    gap: 12px;
+    padding: 6px 12px;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    border-bottom: 1px solid #253044;
+}
+
+.ide-find-columns {
+    position: sticky;
+    top: 0;
+    background: #101924;
+}
+
+.ide-find-results > button > code {
+    grid-column: 3;
+}
+
+.ide-find-results > button:hover, .ide-find-results > button:focus-visible {
+    background: #263d53;
+}
+
+.ide-find-results mark {
+    background: #163d39;
+    color: #baf5e8;
+}

@@ -1,0 +1,339 @@
+.tasks-editor {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+}
+
+.tasks-editor header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-bottom: 1px solid #253044;
+}
+
+.tasks-workspace {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+.tasks-workspace aside {
+    display: flex;
+    flex-direction: column;
+    min-width: 140px;
+    gap: 6px;
+    padding: 8px;
+}
+
+.tasks-workspace nav {
+    flex: 1;
+    overflow: auto;
+}
+
+.tasks-workspace nav button {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    margin-bottom: 4px;
+    text-align: left;
+}
+
+.tasks-workspace nav code {
+    flex: none;
+    color: #98afc3;
+}
+
+.tasks-workspace nav span {
+    overflow-wrap: anywhere;
+}
+
+.tasks-workspace nav button[aria-pressed="true"] {
+    background: #17473f;
+    border-color: #63e2c5;
+}
+
+.tasks-workspace footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 4px;
+}
+
+.tasks-workspace article {
+    flex: 1;
+    min-width: 0;
+    padding: 12px;
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    overflow: auto;
+}
+
+.tasks-workspace article label {
+    display: grid;
+    gap: 4px;
+}
+
+.tasks-workspace article button {
+    justify-self: start;
+}
+
+.task-tree {
+    max-height: 180px;
+    overflow: auto;
+}
+
+.task-tree summary {
+    cursor: pointer;
+}
+
+.task-tree ul {
+    padding-inline-start: 14px;
+}
+
+.task-tree li {
+    list-style: none;
+    margin-block: 3px;
+}
+
+.task-tree button[aria-pressed="true"], .task-sections button[data-selected] {
+    background: #17473f;
+    border-color: #63e2c5;
+}
+
+.task-sections {
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.task-field {
+    display: grid;
+    grid-template-columns: minmax(90px, 34%) minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: start;
+    padding-block: 5px;
+}
+
+.task-field textarea {
+    background: #101b29;
+    color: inherit;
+    border: 1px solid #34465e;
+    border-radius: 4px;
+    resize: vertical;
+}
+
+.task-field [data-scope="switch"][data-part="root"] {
+    justify-self: start;
+}
+
+.task-name-input {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.task-name-input > input {
+    flex: 1;
+}
+
+.editor-progress {
+    flex: 1;
+    min-width: 60px;
+    max-width: 220px;
+}
+
+.task-dialogue-text {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.task-text-preview {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding: 6px;
+    background: #101924;
+}
+
+.task-record-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tasks-editor .resource-picker-button {
+    padding: 6px;
+}
+
+.task-npc-table {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+.task-npc-table table {
+    table-layout: fixed;
+    border-spacing: 0;
+}
+
+.task-npc-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #101924;
+    text-align: left;
+}
+
+.task-npc-table th, .task-npc-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #253044;
+}
+
+.task-npc-table th .column-divider {
+    position: absolute;
+    inset: 0 0 0 auto;
+}
+
+.task-npc-table td input {
+    width: 100%;
+}
+
+.task-npc-table .modified {
+    background: #15352f;
+}
+
+.task-npc-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-npc-pages {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+}
+
+.task-npc-warning {
+    padding: 8px;
+    color: #dcb879;
+}
+
+.task-npc-editor {
+    color: #e2e8f0;
+    background: #101720;
+    color-scheme: dark;
+}
+
+.task-npc-editor table, .task-npc-editor th, .task-npc-editor td {
+    color: #e2e8f0;
+}
+
+.task-npc-editor code {
+    color: #b8cbe0;
+}
+
+.task-npc-editor input {
+    color: #e2e8f0;
+    background: #101b29;
+}
+
+.task-npc-editor input::placeholder {
+    color: #98afc3;
+    opacity: 1;
+}
+
+.task-npc-reference {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    color: #e2e8f0;
+}
+
+.task-npc-reference input {
+    width: 110px;
+    max-width: 40%;
+}
+
+.task-npc-reference span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-block, .task-block-card, .task-structured-field {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    padding-block: 5px;
+}
+
+.task-block-card {
+    border: 1px solid #34465e;
+    border-radius: 5px;
+    padding: 8px;
+}
+
+.task-block-card > summary {
+    cursor: pointer;
+}
+
+.task-block-bar, .task-answer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: end;
+}
+
+.task-answer > :first-child {
+    flex: 1 1 160px;
+}
+
+.task-answer > label {
+    max-width: 140px;
+}
+
+.task-block-scroll {
+    overflow-x: auto;
+}
+
+.task-award-table {
+    table-layout: fixed;
+    border-spacing: 0;
+}
+
+.task-award-table th, .task-award-table td {
+    padding: 4px;
+    color: #e2e8f0;
+    text-align: left;
+    border-bottom: 1px solid #253044;
+}
+
+.task-award-table th {
+    position: relative;
+    padding-right: 8px;
+}
+
+.task-award-table th .column-divider {
+    position: absolute;
+    inset: 0 0 0 auto;
+}
+
+.task-award-table td > input {
+    width: 100%;
+}
+
+.task-block textarea {
+    background: #101b29;
+    color: inherit;
+    border: 1px solid #34465e;
+    border-radius: 4px;
+    resize: vertical;
+}

@@ -1,5 +1,6 @@
 import {createContext, useContext, useEffect, useState} from 'react';
-import {invoke} from '@tauri-apps/api/core';
+import {useResourceInvoke} from '../editor/resource-context';
+import {canonicalFontName, UI_FONTS} from './ui-fonts';
 import {fontNames} from './font-names';
 
 export const GameFonts = createContext<Record<string, string>>({});
@@ -9,12 +10,13 @@ let nextFamily = 0;
 export function useGameFontFamily() {
     const names = useContext(GameFonts);
     return (name: string) => {
-        const family = names[name.toLowerCase()];
+        const family = names[canonicalFontName(name).toLowerCase()] ?? names[name.toLowerCase()];
         return family ? `${JSON.stringify(family)}, ${JSON.stringify(name)}, sans-serif` : name ? `${JSON.stringify(name)}, sans-serif` : undefined;
     };
 }
 
 export function useGameFonts(entries: { name: string }[]) {
+    const invoke = useResourceInvoke();
     const [names, setNames] = useState<Record<string, string>>({});
     const [status, setStatus] = useState({loading: true, completed: 0, total: 0, failed: [] as string[]});
     useEffect(() => {
@@ -33,6 +35,10 @@ export function useGameFonts(entries: { name: string }[]) {
                         const family = `pck-game-font-${++nextFamily}`;
                         const font = await new FontFace(family, bytes).load();
                         document.fonts.add(font);
+                        const file = source.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
+                        const engineFont = UI_FONTS.find(font => font.file === file);
+                        if (engineFont) aliases.push(engineFont.chinese, engineFont.name);
+                        if (engineFont?.name === 'text') aliases.push('books');
                         aliases.forEach(alias => {
                             names[alias.toLowerCase()] = family;
                         });

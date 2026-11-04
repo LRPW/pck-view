@@ -1,0 +1,32 @@
+.column-divider {
+    position: relative;
+    flex: 0 0 7px;
+    width: 7px;
+    align-self: stretch;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+}
+
+.column-divider::after {
+    content: "";
+    position: absolute;
+    inset: 0 3px;
+    background: #253044;
+}
+
+.column-divider[aria-orientation="horizontal"] {
+    width: auto;
+    height: 7px;
+    cursor: row-resize;
+}
+
+.column-divider[aria-orientation="horizontal"]::after {
+    inset: 3px 0;
+}
+
+.column-divider:hover::after,
+.column-divider:focus-visible::after,
+.column-divider:active::after {
+    background: #63e2c5;
+}

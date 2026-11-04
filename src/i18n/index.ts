@@ -84,6 +84,7 @@ const dictionary: Record<string, string> = {
     'Упаковано ': 'Packed ',
     ' файлов: ': ' files: ',
     'Открыть PCK': 'Open PCK',
+    'Открыть': 'Open',
     'Запаковать в PCK': 'Pack into PCK',
     'Распаковать всё': 'Extract all',
     'Добавить файл': 'Add file',

@@ -49,3 +49,16 @@ effect: 30 frames are visible and change over time. The standalone camera fits e
 uses an exact 512x512 screen-space viewport. Full rendering compatibility has not been established.
 Use smoke.ps1 -RequireVisible -RequireAnimation to reject empty or unchanging output. Optional PCKVIEW_GFX_TRACE emits
 renderer diagnostics on stderr; PCKVIEW_GFX_NO_CULL is a diagnostic override only.
+
+MOX files use the same worker and frame protocol. Legacy frame MOX uses A3DFrame; building MOX version 0x80000001 uses its embedded A3DLitModel and the lit render pass. Model textures resolve through Angelica; the camera fits the initial bounds. Pause/restart control frame animation at 30 fps. Pass the full archive path (including models/) for MOX. Preview reads original archives from disk; unsaved changes are not rendered.
+
+Archive discovery scans *.pck beside the opened archive, mounting the resource path's first component plus gfx, surfaces, models, textures, shaders and sfx dependencies. PKX segments are handled by Angelica.
+
+Standalone MOX preview supports mouse orbit, wheel zoom and camera reset. Frame protocol extension: uint32 0xfffffffe followed by three float32 values (yaw, pitch, distance multiplier); no frame is returned for this command. smoke.ps1 -TestOrbit verifies that camera changes produce different frames.
+
+ECM/SMD preview uses CECModel/A3DSkinModel with the original skin shader configuration from configs.pck and shaders.pck. Lua is initialized for ECM loading. BON displays skeleton bone links. Standalone SKI requires a same-stem BON in its directory; use SMD/ECM for models with differently named skeletons. Camera orbit, zoom and dynamic frame size apply to these formats. Action selection is not implemented.
+
+SMD/ECM animation picker enumerates the skin model's declared actions and their STCK (or legacy BON) track paths. Selected actions loop indefinitely; pause sends zero time deltas, restart restarts the selected action. Protocol: 0xfffffffc returns count and GBK name/track length-prefixed pairs; 0xfffffffb + uint32 action index returns uint32 success (0xffffffff stops actions). smoke.ps1 -AnimationIndex 0 verifies animation, paused frames and repeatable restart. Arbitrary external STCK binding is not supported.
+
+GLB export: toolbar button exports MOX geometry, or SMD/ECM/SKI bind geometry with skeleton joints, normalized weights and all declared STCK/legacy BON actions. Diffuse textures are embedded as PNG. Coordinates and winding convert from Angelica to glTF; animation bone transforms are sampled at the source FPS, preserving clip duration and names. Missing tracks fail export instead of silently dropping clips. Morph/cloth/supple/muscle meshes currently return an explicit unsupported error. Game ECM scripts, effects, lightmaps and custom shaders are not translated to Blender materials.
+Protocol command 0xfffffffa returns uint32 success, uint32 length, and GLB bytes (or error text). Rust writes the completed export atomically. smoke.ps1 -OutputGlb exports a fixture. verify-glb-blender.py imports a GLB in Blender, checks weights and animation deformation, renders a preview and writes a .blend plus a JSON report; pass --static for MOX. Validation fixtures were checked with Blender 5.2.3 and Khronos glTF Validator 2.0.0-dev.3.10 (zero errors/warnings).

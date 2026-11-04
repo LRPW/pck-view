@@ -1,5 +1,5 @@
-import {useEffect, useState, type CSSProperties} from 'react';
-import {invoke} from '@tauri-apps/api/core';
+import {type CSSProperties, useEffect, useState} from 'react';
+import {useResourceInvoke} from '../editor/resource-context';
 import {decodeDds, decodeTga} from '../../lib/textures/texture-decode';
 
 export const attr = (e: Element, name: string) => Array.from(e.attributes).find(a => a.name.toLowerCase() === name.toLowerCase())?.value ?? '';
@@ -7,6 +7,7 @@ const normalize = (s: string) => s.replace(/\\/g, '/').replace(/^\/+/, '').toLow
 export type UiTexture = { url: string; width: number; height: number };
 
 export function useInterfaceTextures(model: Element | null, entries: { name: string }[]) {
+    const invoke = useResourceInvoke();
     const [textures, setTextures] = useState<Record<string, UiTexture>>({});
     const [missing, setMissing] = useState<string[]>([]);
     const [progress, setProgress] = useState({completed: 0, total: 0, current: ''});
@@ -81,7 +82,7 @@ export function TextureFrame({element, textures}: { element: Element; textures: 
     const [hover, setHover] = useState(false), [down, setDown] = useState(false);
     const resources = Array.from(element.children).find(e => e.tagName.toUpperCase() === 'RESOURCE');
     const find = (name: string) => resources && Array.from(resources.children).find(e => e.tagName.toLowerCase() === name.toLowerCase());
-    const node = (down && find('FrameDownImage')) || (hover && find('FrameOnHoverImage')) || find('FrameUpImage') || find('FrameImage') || find('Image');
+    const node = (down && find('FrameDownImage')) || (hover && find('FrameOnHoverImage')) || find('FrameUpImage') || find('FrameImage') || find('Image') || find('NormalImage');
     const texture = node && textures[attr(node, 'FileName')];
     let style: CSSProperties = {position: 'absolute', inset: 0, pointerEvents: 'none'};
     if (texture) {
@@ -97,7 +98,7 @@ export function TextureFrame({element, textures}: { element: Element; textures: 
             borderStyle: 'solid', borderColor: 'transparent', borderWidth: 0,
             borderImage: `url("${url}") ${y} ${x} fill / ${y}px ${x}px / 0 stretch`
         };
-        if (mode === 1 || node!.tagName.toLowerCase() === 'image') style = {
+        if (mode === 1 || ['image', 'normalimage', 'checkedimage'].includes(node!.tagName.toLowerCase())) style = {
             position: 'absolute',
             inset: 0,
             backgroundImage: `url("${url}")`,

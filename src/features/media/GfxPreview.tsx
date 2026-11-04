@@ -1,8 +1,8 @@
 import {ResourceLoading} from "./ResourceLoading";
 import {NativeGfxPreview} from "./NativeGfxPreview";
-import {keys, sampleKey, random} from "./gfx-animation";
+import {keys, random, sampleKey} from "./gfx-animation";
 import {useEffect, useMemo, useState} from 'react';
-import {invoke} from '@tauri-apps/api/core';
+import {useResourceInvoke} from '../editor/resource-context';
 import {useInterfaceTextures} from './InterfaceTextures';
 
 function LegacyGfxPreview({bytes, file, entries = [], embedded = false}: {
@@ -11,6 +11,7 @@ function LegacyGfxPreview({bytes, file, entries = [], embedded = false}: {
     entries?: { name: string }[];
     embedded?: boolean
 }) {
+    const invoke = useResourceInvoke();
     const [loaded, setLoaded] = useState<number[]>(), [error, setError] = useState('');
     const [playing, setPlaying] = useState(true), [time, setTime] = useState(0);
     useEffect(() => {

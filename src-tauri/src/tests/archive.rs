@@ -4,6 +4,14 @@ use super::*;
 fn inspect_native_gfx_fixture() {
     let path = std::env::var("PCKVIEW_GFX_FIXTURE").expect("PCKVIEW_GFX_FIXTURE");
     let archive = Archive::open(path.into()).unwrap();
+    if std::env::var_os("PCKVIEW_FIND_STCK").is_some() {
+        for (index, entry) in archive.entries.iter().enumerate() {
+            if !entry.name.to_lowercase().ends_with(".smd") || entry.len > 250000 { continue; }
+            let data = archive.data(index).unwrap();
+            if data.windows(5).any(|bytes| bytes.eq_ignore_ascii_case(b".stck")) { println!("STCK MODEL: {}", entry.name); break; }
+        }
+        return;
+    }
     if std::env::var_os("PCKVIEW_FIND_UI_GFX").is_some() {
         let mut found = 0;
         for (index, entry) in archive.entries.iter().enumerate() {
@@ -20,12 +28,13 @@ fn inspect_native_gfx_fixture() {
     if let Ok(name) = std::env::var("PCKVIEW_GFX_ENTRY") {
         let index = archive.entries.iter().position(|e| e.name == name).unwrap();
         let data = archive.data(index).unwrap();
+        println!("HEADER={:02x?}", &data[..data.len().min(32)]);
         let (text, _, _) = encoding_rs::GBK.decode(&data);
-        println!("{}", &text[..text.len().min(6000)]);
+        println!("{}", text.chars().take(6000).collect::<String>());
         return;
     }
     let filter = std::env::var("PCKVIEW_GFX_FILTER").unwrap_or_default();
-    for entry in archive.entries.iter().filter(|e| e.name.to_lowercase().ends_with(".gfx") && e.name.contains(&filter)).take(3) {
+    for entry in archive.entries.iter().filter(|e| e.name.contains(&filter) && [".gfx", ".ecm", ".smd", ".ski", ".bon"].iter().any(|ext| e.name.to_lowercase().ends_with(ext))).take(15) {
         println!("{}", entry.name);
         let (encoded, _, _) = encoding_rs::GBK.encode(entry.name.trim_start_matches("gfx\\"));
         println!("HEX={}", encoded.iter().map(|b| format!("{b:02x}")).collect::<String>());

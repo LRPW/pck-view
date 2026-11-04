@@ -1,9 +1,29 @@
+#[path = "startup.rs"]
+mod startup;
 #[path = "search/mod.rs"]
 mod search;
 #[path = "native_gfx.rs"]
 mod native_gfx;
 #[path = "ui_fonts.rs"]
 mod ui_fonts;
+#[path = "elements.rs"]
+mod elements;
+#[path = "project.rs"]
+mod project;
+#[path = "ide.rs"]
+mod ide;
+#[path = "tasks.rs"]
+mod tasks;
+#[path = "text_export.rs"]
+mod text_export;
+#[path = "locales.rs"]
+mod locales;
+#[path = "translation.rs"]
+mod translation;
+#[path = "translation_credentials.rs"]
+mod translation_credentials;
+#[path = "ide_search.rs"]
+mod ide_search;
 use search::SearchControl;
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use serde::Serialize;
@@ -17,6 +37,14 @@ use tauri::Emitter;
 const SPLIT: u64 = 0x7fffff00;
 const VERSION: u32 = 0x20002;
 type Result<T> = std::result::Result<T, String>;
+
+#[cfg(test)]
+fn test_client_root() -> std::path::PathBuf {
+    std::env::var_os("PW_CLIENT_DIR")
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .expect("Set PW_CLIENT_DIR to the client directory containing data/ and the PCK files")
+}
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -244,8 +272,11 @@ impl Archive {
         let b = Self::read_at(&self.path, e.offset as u64, e.packed.min(e.len) as usize)?;
         self.decode_entry(e, b)
     }
-    fn decode_entry(&self, e: &Entry, mut b: Vec<u8>) -> Result<Vec<u8>> {
-        if self.encrypted {
+    fn decode_entry(&self, e: &Entry, b: Vec<u8>) -> Result<Vec<u8>> {
+        Self::decode_stored(self.encrypted,e,b)
+    }
+    fn decode_stored(encrypted:bool,e:&Entry,mut b:Vec<u8>)->Result<Vec<u8>> {
+        if encrypted {
             let mask = (b.len() as u32).wrapping_add(0x739802ab);
             for c in b.chunks_exact_mut(4) {
                 let v = u32::from_be_bytes(c.try_into().unwrap()).rotate_left(16) ^ mask;
@@ -646,7 +677,7 @@ async fn open_search_window(app: tauri::AppHandle) -> Result<()> {
         window.set_focus().map_err(err)?;
     } else {
         tauri::WebviewWindowBuilder::new(&app, "search", tauri::WebviewUrl::App("index.html#search".into()))
-            .title("Find in Files — LRPW | PCK View").inner_size(900.0, 600.0)
+            .title("Поиск в файлах — PW Forge").inner_size(1100.0, 720.0)
             .min_inner_size(520.0, 320.0).build().map_err(err)?;
     }
     Ok(())
@@ -668,16 +699,13 @@ async fn open_resource_window(name: String, state: tauri::State<'_, App>) -> Res
 }
 #[tauri::command]
 fn startup_target() -> Option<(String, String)> {
-    let args: Vec<String> = std::env::args().collect();
-    let path = args.windows(2).find(|w| w[0] == "--open-archive")?.get(1)?.clone();
-    let name = args.windows(2).find(|w| w[0] == "--select-entry")?.get(1)?.clone();
-    Some((path, name))
+    startup::target(std::env::args_os())
 }
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 native_gfx::shutdown();
                 use tauri::Manager;
                 window.app_handle().exit(0);
@@ -686,8 +714,43 @@ pub fn run() {
         .manage(App::default())
         .manage(SurfaceCache::default())
         .manage(SearchControl::default())
+        .manage(elements::Elements::default())
+        .manage(ide::Ide::default())
         .invoke_handler(tauri::generate_handler![
+            ide::ide_open,ide::ide_read,ide::ide_resource,ide::ide_save,ide::ide_save_archive,ide::ide_close,ide::ide_native_context,ide::ide_fonts,ide::ide_font,
+            ide::ide_save_domain,
+            ide::ide_item_descriptions,
+            tasks::tasks_open, tasks::tasks_detail, tasks::tasks_save,
+            text_export::ide_export_texts,
+            locales::ide_locale_page, locales::ide_locale_save, locales::ide_locale_apply,
+            translation::ide_translate_row,
+            translation_credentials::ide_translation_key_load,
+            translation_credentials::ide_translation_key_store,
+            locales::batch::ide_locale_batch_start, locales::batch::ide_locale_batch_cancel, locales::batch::ide_locale_batch_status,
+            project::project_scan,
+            project::project_create,
+            project::project_open,
+            project::project_startup,
+            project::project_children,
+            project::project_read,
+            project::project_write,
+            project::project_path,
+            project::project_build,
+            project::project_register_association,
+            elements::elements_open,
+            elements::elements_open_project,
+            elements::elements_open_ide,
+            elements::elements_close,
+            elements::elements_rows,
+            elements::gshop_categories,
+            elements::gshop_inventory_atlas,
+            elements::elements_record,
+            elements::elements_find_item,
+            elements::elements_update,
+            elements::elements_save,
             open_search_window,
+            ide_search::ide_search,
+            ide::ide_search_sources,
             open_resource_window,
             startup_target,
             ui_fonts::list_ui_fonts,
@@ -695,6 +758,8 @@ pub fn run() {
             native_gfx::native_gfx_create,
             native_gfx::native_gfx_frame,
             native_gfx::native_gfx_close,
+            native_gfx::native_gfx_animations,
+            native_gfx::native_gfx_export_glb,
             search::search_contents,
             search::cancel_search,
             open_archive,

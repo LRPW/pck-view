@@ -23,7 +23,7 @@ fn game_layout_roundtrip() {
 #[ignore = "requires local game installation"]
 fn installed_archives() {
     for name in ["configs", "interfaces", "surfaces", "shaders"] {
-        let p = PathBuf::from(format!(r"D:\PerfectWorld\pw_client_evolved\{}.pck", name));
+        let p = test_client_root().join(format!("{name}.pck"));
         let a = Archive::open(p).unwrap_or_else(|e| panic!("{name}: {e}"));
         println!(
             "{name}: {} entries, header {}",

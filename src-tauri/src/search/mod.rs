@@ -8,7 +8,7 @@ pub(super) struct SearchResults {
     cancelled: bool,
 }
 #[derive(Clone, Serialize)]
-struct SearchHit {
+pub(super) struct SearchHit {
     index: usize,
     line: usize,
     column: usize,
@@ -20,7 +20,7 @@ struct SearchHit {
     after: String,
     encoding: String,
 }
-fn collect_hits(text: &str, matcher: &regex::Regex, index: usize, encoding: &str, hits: &mut Vec<SearchHit>) -> bool {
+pub(super) fn collect_hits(text: &str, matcher: &regex::Regex, index: usize, encoding: &str, hits: &mut Vec<SearchHit>) -> bool {
     let mut cursor = 0;
     let mut offset = 0;
     let mut line = 1;
@@ -54,6 +54,9 @@ fn collect_hits(text: &str, matcher: &regex::Regex, index: usize, encoding: &str
 
 #[derive(Default)]
 pub(super) struct SearchControl(Arc<std::sync::atomic::AtomicU64>);
+impl SearchControl {
+    pub(super) fn token(&self) -> Arc<std::sync::atomic::AtomicU64> { self.0.clone() }
+}
 #[derive(Clone, Serialize)]
 struct SearchBatch<'a> {
     search_id: u64,
@@ -63,14 +66,14 @@ struct SearchBatch<'a> {
 pub(super) fn cancel_search(search_id: u64, control: tauri::State<'_, SearchControl>) {
     control.0.store(search_id, std::sync::atomic::Ordering::Relaxed);
 }
-fn known_binary(name: &str) -> bool {
+pub(super) fn known_binary(name: &str) -> bool {
     let extension = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     matches!(extension.as_str(), "7z" | "zip" | "rar" | "gz" | "pck" | "pkx" |
         "dds" | "tga" | "png" | "jpg" | "jpeg" | "bmp" | "gif" | "ico" |
         "wav" | "mp3" | "ogg" | "flac" | "mp4" | "avi" | "bik" |
         "ttf" | "otf" | "exe" | "dll" | "pdb")
 }
-fn content_matcher(query: String, regexp: bool, case_sensitive: bool, whole_word: bool) -> Result<regex::Regex> {
+pub(super) fn content_matcher(query: String, regexp: bool, case_sensitive: bool, whole_word: bool) -> Result<regex::Regex> {
     if query.is_empty() { return Err("Введите текст поиска".into()); }
     let pattern = if regexp { query } else { regex::escape(&query) };
     let pattern = if whole_word { format!(r"\b(?:{})\b", pattern) } else { pattern };

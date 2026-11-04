@@ -1,0 +1,92 @@
+.locale-editor {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+    color: #e2e8f0;
+}
+
+.locale-editor header, .locale-editor footer, .locale-editor form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.locale-editor header, .locale-editor footer, .locale-empty {
+    padding: 8px;
+}
+
+.locale-editor header {
+    flex-wrap: wrap;
+    border-bottom: 1px solid #253044;
+}
+
+.locale-editor form input {
+    width: 80px;
+}
+
+.locale-editor header > input {
+    flex: 1;
+    min-width: 140px;
+}
+
+.locale-rows {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 8px;
+}
+
+.locale-row {
+    display: grid;
+    gap: 6px;
+    padding: 8px;
+    border-bottom: 1px solid #253044;
+}
+
+.locale-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 90px;
+}
+
+.locale-scroll-end {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 12px;
+}
+
+.locale-row > code, .locale-editor footer > code {
+    color: #98afc3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.locale-segment {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+}
+
+.locale-original {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding: 4px;
+}
+
+.locale-editor textarea {
+    color: inherit;
+    background: #101b29;
+}
+
+.locale-apply-errors {
+    padding: 8px;
+    max-height: 150px;
+    overflow: auto;
+    color: #dcb879;
+}
+
+.locale-row > button { justify-self: start; }
+.locale-suggestion { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border: 1px solid #34465e; }
+.locale-suggestion > div { width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }

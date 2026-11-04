@@ -1,0 +1,147 @@
+.domain-editor {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+}
+
+.domain-editor > header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-bottom: 1px solid #253044;
+}
+
+.domain-workspace {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+.domain-workspace > aside {
+    display: flex;
+    flex-direction: column;
+    min-width: 120px;
+    gap: 6px;
+    padding: 8px;
+}
+
+.domain-workspace nav {
+    display: grid;
+    align-content: start;
+    gap: 4px;
+    overflow: auto;
+}
+
+.domain-workspace nav button {
+    display: flex;
+    text-align: left;
+    align-items: baseline;
+    gap: 8px;
+    overflow-wrap: anywhere;
+}
+
+.domain-workspace nav code {
+    color: #98afc3;
+    flex: none;
+}
+
+.domain-workspace nav button.selected {
+    background: #17473f;
+    border-color: #63e2c5;
+}
+
+.domain-workspace nav button.neighbour {
+    border-color: #ba9657;
+}
+
+.domain-details {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.domain-map {
+    display: block;
+    flex: 1 1 0;
+    width: 100%;
+    min-height: 100px;
+    background: #101924;
+}
+
+.domain-region {
+    cursor: pointer;
+}
+
+.domain-fill {
+    fill: #2f4763;
+    fill-rule: evenodd;
+}
+
+.domain-outline {
+    fill: none;
+    stroke: #8194a9;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+}
+
+.domain-region:hover .domain-fill {
+    fill: #466687;
+}
+
+.domain-region.neighbour .domain-fill {
+    fill: #8d6d37;
+}
+
+.domain-region.selected .domain-fill {
+    fill: #226d60;
+}
+
+.domain-region.selected .domain-outline {
+    stroke: #63e2c5;
+    stroke-width: 2;
+}
+
+.domain-center {
+    fill: #d5fff4;
+    pointer-events: none;
+}
+
+.domain-properties {
+    display: grid;
+    flex: none;
+    max-height: calc(100% - 107px);
+    align-content: start;
+    overflow: auto;
+    grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+    gap: 8px;
+    padding: 10px;
+}
+
+.domain-properties label {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.domain-wide {
+    grid-column: 1 / -1;
+}
+
+.domain-properties summary {
+    cursor: pointer;
+    margin-bottom: 6px;
+}
+
+.domain-properties textarea {
+    background: #101b29;
+    color: inherit;
+    border: 1px solid #34465e;
+    border-radius: 4px;
+    resize: vertical;
+}

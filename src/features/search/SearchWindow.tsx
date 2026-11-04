@@ -37,7 +37,7 @@ export type SearchAction = { action: string; value?: string | number | boolean }
 export function SearchWindow() {
     const language = useLanguage();
     useEffect(() => {
-        void getCurrentWindow().setTitle(t('Поиск в файлах') + ' — LRPW | PCK View');
+        void getCurrentWindow().setTitle(t('Поиск в файлах') + ' — PW Forge');
     }, [language]);
     const [snapshot, setSnapshot] = useState<SearchSnapshot>();
     const [draftQuery, setDraftQuery] = useState<string>();

@@ -1,45 +1,34 @@
+import {normalizeUiFontNames} from '../features/media/ui-fonts';
+import {ElementsEditor} from '../features/editor/ElementsEditor';
+import {ProjectWorkspace} from '../features/editor/ProjectWorkspace';
+import {useUnsavedGuard} from '../features/editor/unsaved';
+import {NativeGfxPreview} from '../features/media/NativeGfxPreview';
+import {TextEditor, type TextEditorHandle} from '../features/editor/TextEditor';
 import {GfxPreview} from "../features/media/GfxPreview";
 import {InterfaceEditor} from "../features/media/InterfaceEditor";
-import {InterfacePreview, interfaceType} from "../features/media/InterfacePreview";
+import {interfaceType} from "../features/media/InterfacePreview";
 import {message, setLanguage, t, useLanguage} from "../i18n/index";
-import React, {
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-} from "react";
+import React, {useCallback, useEffect, useMemo, useRef, useState,} from "react";
 
-import {
-    Badge,
-    Box,
-    Button,
-    Flex,
-    Heading,
-    Input,
-    Text,
-    Textarea,
-} from "@chakra-ui/react";
+import {Badge, Box, Button, Flex, Heading, Input, Text,} from "@chakra-ui/react";
 import {invoke} from "@tauri-apps/api/core";
 import {emitTo, listen} from "@tauri-apps/api/event";
 import {
     confirm as nativeConfirm,
     type ConfirmDialogOptions,
+    message as showMessage,
     open,
     save,
 } from "@tauri-apps/plugin-dialog";
 
 import {ArchiveTree} from "../features/archive/ArchiveTree";
 import {MediaPreview, mediaType} from "../features/media/MediaPreview";
-import {
-    type SearchAction,
-    type SearchSnapshot,
-} from "../features/search/SearchWindow";
+import {type SearchAction, type SearchSnapshot,} from "../features/search/SearchWindow";
 import {getCurrentWindow} from "@tauri-apps/api/window";
 
 function confirm(text: string, options: ConfirmDialogOptions = {}) {
     return nativeConfirm(text, {
-        title: "LRPW | PCK View",
+        title: "PW Forge",
         okLabel: t("Да"),
         cancelLabel: t("Отмена"),
         ...options,
@@ -77,6 +66,10 @@ type OperationProgress = {
 };
 
 export function App() {
+    const [elementsVisible, setElementsVisible] = useState(false);
+    const [projectVisible, setProjectVisible] = useState(true);
+    const [elementsPath, setElementsPath] = useState<string>();
+    const [elementsProject, setElementsProject] = useState<{ manifest: string; path: string }>();
     const [extractionErrors, setExtractionErrors] = useState<string[]>([]);
     const language = useLanguage();
     const [progress, setProgress] = useState<OperationProgress>();
@@ -113,6 +106,7 @@ export function App() {
         [tab, setTab] = useState("text"),
         [newName, setNewName] = useState("");
     const [dialogTrail, setDialogTrail] = useState<number[]>([]);
+    useUnsavedGuard('PCK', dirty || pending);
     const interfaceViews = useRef(new Map<string, { selection: number; zoom: number }>());
     const chooseHandler = useRef<(index: number) => void>(() => {
     });
@@ -123,10 +117,22 @@ export function App() {
         if (startupRequested.current) return;
         startupRequested.current = true;
         void invoke<[string, string] | null>('startup_target').then(async target => {
+            if (!target && (await invoke<string | null>('project_startup') || localStorage.getItem('pwforge:last-project'))) return;
+            if (target) setProjectVisible(false);
+            if (!target) {
+                try {
+                    const saved = JSON.parse(localStorage.getItem('pckview:last-document') ?? 'null');
+                    if (saved && typeof saved.path === 'string' && saved.path) {
+                        target = [saved.path, typeof saved.entry === 'string' ? saved.entry : ''];
+                    }
+                } catch { /* A missing or invalid saved session must not prevent startup. */
+                }
+            }
             if (!target) return;
+            const [path, entryName] = target;
             await run(async () => {
-                const opened = await invoke<Archive>('open_archive', {path: target[0]});
-                startupEntry.current = target[1];
+                const opened = await invoke<Archive>('open_archive', {path});
+                startupEntry.current = entryName;
                 setArchive(opened);
             });
         }).catch(e => setStatus(String(e)));
@@ -140,6 +146,17 @@ export function App() {
         if (index < 0) setStatus('Ресурс не найден: ' + requested);
         else chooseHandler.current(index);
     }, [archive]);
+    useEffect(() => {
+        if (!archive || startupEntry.current) return;
+        try {
+            localStorage.setItem('pckview:last-document', JSON.stringify({
+                path: archive.path,
+                entry: selected === undefined ? null : archive.entries[selected]?.name ?? null
+            }));
+        } catch { /* Keep the editor usable if storage is unavailable. */
+        }
+    }, [archive, selected]);
+
     const chooseStable = useCallback(
         (index: number) => chooseHandler.current(index),
         [],
@@ -155,7 +172,7 @@ export function App() {
     const [activeHit, setActiveHit] = useState(-1);
     const [truncated, setTruncated] = useState(false);
     const searchInput = useRef<HTMLInputElement>(null);
-    const editor = useRef<HTMLTextAreaElement>(null);
+    const editor = useRef<TextEditorHandle>(null);
     const jump = useRef<SearchHit | undefined>(undefined);
     useEffect(() => {
         if (findOpen) {
@@ -169,9 +186,7 @@ export function App() {
             el = editor.current;
         if (!hit || !el || busy || selected !== hit.index) return;
         jump.current = undefined;
-        el.focus();
-        el.setSelectionRange(hit.start, hit.end);
-        el.scrollTop = Math.max(0, (hit.line - 1) * 21 - el.clientHeight / 2);
+        el.reveal(hit.start, hit.end);
     }, [text, selected, busy, tab]);
 
     async function openHit(index: number) {
@@ -199,6 +214,12 @@ export function App() {
     ]);
     useEffect(() => {
         const handler = (event: KeyboardEvent) => {
+            if ((event.ctrlKey || event.metaKey) && !event.altKey && event.code === 'KeyO') {
+                event.preventDefault();
+                if (!busy && !searching && !event.repeat) void openFile();
+                return;
+            }
+            if (elementsVisible || projectVisible) return;
             if (event.code === "Escape" && findOpen) {
                 event.preventDefault();
                 setFindOpen(false);
@@ -443,18 +464,17 @@ export function App() {
         return (
             !pending ||
             (await confirm(t("Отбросить несохранённые изменения текста?"), {
-                title: "LRPW | PCK View",
+                title: "PW Forge",
                 kind: "warning",
             }))
         );
     }
 
-    function decode(data: number[], enc: string) {
-        setText(
-            new TextDecoder(enc, {ignoreBOM: true}).decode(
-                new Uint8Array(data),
-            ),
-        );
+    function decode(data: number[], enc: string, fileName = selected === undefined ? '' : archive?.entries[selected]?.name ?? '') {
+        const decoded = new TextDecoder(enc, {ignoreBOM: true}).decode(new Uint8Array(data));
+        const normalized = interfaceType(fileName) ? normalizeUiFontNames(decoded) : decoded;
+        setText(normalized);
+        setPending(normalized !== decoded);
     }
 
     async function choose(i: number, forcedEncoding?: string, trail?: number[]) {
@@ -501,26 +521,28 @@ export function App() {
             enc = forcedEncoding ?? enc;
             setEncoding(enc);
             setTab(
-                !forcedEncoding && (mediaType(archive!.entries[i].name) || interfaceType(archive!.entries[i].name) || /\.gfx$/i.test(archive!.entries[i].name))
+                !forcedEncoding && (mediaType(archive!.entries[i].name) || interfaceType(archive!.entries[i].name) || /\.(gfx|mox|ecm|smd|ski|bon)$/i.test(archive!.entries[i].name))
                     ? "preview"
                     : "text",
             );
             if (forcedEncoding || !mediaType(archive!.entries[i].name))
-                decode(b, enc);
-            else setText("");
-            setPending(false);
+                decode(b, enc, archive!.entries[i].name);
+            else {
+                setText("");
+                setPending(false);
+            }
             setStatus(archive!.entries[i].name);
             setDialogTrail(trail ?? [i]);
         });
     }
 
-    async function openArchive() {
+    async function openArchive(selectedPath?: string) {
         if (
             (dirty || pending) &&
             !(await confirm(t("Открыть другой архив и отбросить изменения?")))
         )
             return;
-        const path = await open({
+        const path = selectedPath ?? await open({
             filters: [{name: "Perfect World Archive", extensions: ["pck"]}],
         });
         if (typeof path === "string")
@@ -531,7 +553,31 @@ export function App() {
                 setDirty(false);
                 setPending(false);
                 setStatus("Архив открыт");
+                setElementsVisible(false);
+                setProjectVisible(false);
             });
+    }
+
+    async function openFile() {
+        const path = await open({
+            multiple: false,
+            filters: [{name: 'PW Forge', extensions: ['pwforge', 'pck', 'data']}]
+        });
+        if (typeof path !== 'string') return;
+        const name = path.replace(/\\/g, '/').split('/').pop()!.toLowerCase();
+        if (name.endsWith('.pwforge')) {
+            window.dispatchEvent(new CustomEvent('pwforge-open-project', {detail: path}));
+            setElementsVisible(false);
+            setProjectVisible(true);
+        } else if (name.endsWith('.pck')) {
+            await openArchive(path);
+        } else if (/^elements(?:[._-].*)?\.data$/i.test(name)) {
+            setElementsProject(undefined);
+            setElementsPath(path);
+            setElementsVisible(true);
+        } else {
+            await showMessage(`Для файла «${name}» пока нет редактора.`, {title: 'PW Forge', kind: 'error'});
+        }
     }
 
     async function apply() {
@@ -676,6 +722,14 @@ export function App() {
     );
     return (
         <Flex direction="column" h="100vh" bg="#0b1018" color="#dae3ef">
+            <ProjectWorkspace visible={projectVisible && !elementsVisible} onBack={() => setProjectVisible(false)}
+                              onOpen={() => void openFile()} onElements={(path, context) => {
+                setElementsPath(path);
+                setElementsProject(context);
+                setElementsVisible(true);
+            }}/>
+            <ElementsEditor visible={elementsVisible} onOpen={() => void openFile()} requestedPath={elementsPath}
+                            requestedProject={elementsProject} onBack={() => setElementsVisible(false)}/>
             <Flex
                 p="5"
                 gap="4"
@@ -685,10 +739,10 @@ export function App() {
             >
                 <Box mr="auto">
                     <Heading size="xl">
-                        <span style={{color: "#63e2c5"}}>LRPW</span> | PCK
-                        View
+                        <span style={{color: "#63e2c5"}}>PW Forge</span>
                     </Heading>
                 </Box>
+                <Button onClick={() => setProjectVisible(true)}>Проект</Button>
                 <Flex gap="1" role="group" aria-label="Language">
                     <Button
                         size="sm"
@@ -709,8 +763,8 @@ export function App() {
                         EN
                     </Button>
                 </Flex>
-                <Button disabled={busy || searching} onClick={openArchive}>
-                    {t("Открыть PCK")}
+                <Button disabled={busy || searching} onClick={() => void openFile()}>
+                    {t("Открыть")}
                 </Button>
                 <Button disabled={busy || searching} onClick={packFolder}>
                     {t("Запаковать в PCK")}
@@ -792,7 +846,7 @@ export function App() {
                                     {position < dialogTrail.length - 1 ? ' / ' : ''}</span>)}
                             </Flex>}
                             <Flex gap="3" align="center" wrap="wrap">
-                                {(mediaType(entry.name) || interfaceType(entry.name) || /\.gfx$/i.test(entry.name)) && (
+                                {(mediaType(entry.name) || interfaceType(entry.name) || /\.(gfx|mox|ecm|smd|ski|bon)$/i.test(entry.name)) && (
                                     <Button
                                         size="sm"
                                         onClick={() => setTab("preview")}
@@ -825,7 +879,6 @@ export function App() {
                                         if (await discard()) {
                                             setEncoding(v);
                                             decode(bytes, v);
-                                            setPending(false);
                                         }
                                     }}
                                 >
@@ -835,7 +888,8 @@ export function App() {
                                     <option value="utf-16be">UTF-16 BE</option>
                                 </select>
                             </Flex>
-                            {tab === "preview" && /\.gfx$/i.test(entry.name) ?
+                            {tab === "preview" && /\.(mox|ecm|smd|ski|bon)$/i.test(entry.name) ? <NativeGfxPreview
+                                file={entry.name}/> : tab === "preview" && /\.gfx$/i.test(entry.name) ?
                                 <GfxPreview file={entry.name} bytes={bytes}
                                             entries={archive?.entries ?? EMPTY_ENTRIES}/> : tab === "preview" && interfaceType(entry.name) ? (
                                     <InterfaceEditor fileName={entry.name} key={`${archive?.path}:${selected}`}
@@ -865,40 +919,36 @@ export function App() {
                                         setPending(true);
                                     }}/>
                                 ) : tab === "preview" && mediaType(entry.name) ? (
-                                <MediaPreview
-                                    key={selected}
-                                    name={entry.name}
-                                    bytes={bytes}
-                                />
-                            ) : tab === "text" ? (
-                                <Textarea
-                                    ref={editor}
-                                    readOnly={busy || searching}
-                                    className="file-editor"
-                                    wrap="off"
-                                    flex="1"
-                                    resize="none"
-                                    fontFamily="monospace"
-                                    spellCheck={false}
-                                    value={text}
-                                    onChange={(e) => {
-                                        setText(e.target.value);
-                                        setPending(true);
-                                    }}
-                                />
-                            ) : (
-                                <Box
-                                    as="pre"
-                                    flex="1"
-                                    overflow="auto"
-                                    fontSize="sm"
-                                >
-                                    {hex}
-                                    {bytes.length > 65536
-                                        ? t("\n… первые 64 KiB")
-                                        : ""}
-                                </Box>
-                            )}
+                                    <MediaPreview
+                                        key={selected}
+                                        name={entry.name}
+                                        bytes={bytes}
+                                    />
+                                ) : tab === "text" ? (
+                                    <TextEditor
+                                        key={archive?.path + ':' + selected}
+                                        ref={editor}
+                                        fileName={entry.name}
+                                        readOnly={busy || searching}
+                                        value={text}
+                                        onChange={value => {
+                                            setText(value);
+                                            setPending(true);
+                                        }}
+                                    />
+                                ) : (
+                                    <Box
+                                        as="pre"
+                                        flex="1"
+                                        overflow="auto"
+                                        fontSize="sm"
+                                    >
+                                        {hex}
+                                        {bytes.length > 65536
+                                            ? t("\n… первые 64 KiB")
+                                            : ""}
+                                    </Box>
+                                )}
                             <Flex gap="2" wrap="wrap">
                                 <Button
                                     disabled={busy || searching || !pending}

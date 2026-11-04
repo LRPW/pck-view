@@ -1,48 +1,77 @@
-type Entry = { name: string; size: number; changed: boolean };
-type Node = { id: string; name: string; path: string; index?: number; children?: Node[] };
+type Node = { id: string; name: string; path: string; index?: number; children?: Node[]; childCount?: number };
+type Request = { entries?: string[]; query: string; expanded: string[]; id: number };
 
-function makeTree(entries: Entry[]): Node {
-    const root: Node = {id: 'root', name: 'Ресурсы', path: '', children: []};
-    const folders = new Map<string, Node>([['', root]]);
-    entries.forEach((entry, index) => {
-        const parts = entry.name.replaceAll('\\', '/').split('/').filter(Boolean);
-        let parent = root;
-        let path = '';
-        parts.forEach((part, depth) => {
-            path += (path ? '/' : '') + part;
-            if (depth === parts.length - 1) {
-                parent.children!.push({id: 'file:' + index, name: part, path, index});
-            } else {
-                const key = path.toLowerCase();
-                let folder = folders.get(key);
-                if (!folder) {
-                    folder = {id: 'folder:' + key, name: part, path, children: []};
-                    folders.set(key, folder);
-                    parent.children!.push(folder);
-                }
-                parent = folder;
+const collator = new Intl.Collator();
+const makeRoot = (): Node => ({id: 'root', name: 'Ресурсы', path: '', children: []});
+let source = makeRoot();
+let folders = new Map<string, Node>();
+let entries: string[] = [];
+let indexed = 0;
+let timer: ReturnType<typeof setTimeout> | undefined;
+let request: Request;
+let lastPublish = 0;
+const dirty = new Set<Node>();
+
+function insert(entry: string, index: number) {
+    const parts = entry.replaceAll('\\', '/').split('/').filter(Boolean);
+    let parent = source;
+    let path = '';
+    parts.forEach((part, depth) => {
+        path += (path ? '/' : '') + part;
+        if (depth === parts.length - 1) {
+            parent.children!.push({id: 'file:' + index, name: part, path, index});
+            dirty.add(parent);
+        } else {
+            const key = path.toLowerCase();
+            let folder = folders.get(key);
+            if (!folder) {
+                folder = {id: 'folder:' + key, name: part, path, children: []};
+                folders.set(key, folder);
+                parent.children!.push(folder);
+                dirty.add(parent);
             }
-        });
+            parent = folder;
+        }
     });
-
-    function sort(node: Node) {
-        node.children?.sort((a, b) => Number(!!b.children) - Number(!!a.children) || a.name.localeCompare(b.name));
-        node.children?.forEach(sort);
-    }
-
-    sort(root);
-    return root;
 }
 
-
-let source: Node = {id: 'root', name: 'Ресурсы', path: '', children: []};
-let total = 0;
-self.onmessage = (event: MessageEvent<{ entries?: Entry[]; query: string; id: number }>) => {
-    const {entries, query, id} = event.data;
-    if (entries) {
-        source = makeTree(entries);
-        total = entries.length;
+function prepare() {
+    timer = undefined;
+    const end = Math.min(entries.length, indexed + (indexed === 0 ? 500 : 4000));
+    for (; indexed < end; indexed++) insert(entries[indexed], indexed);
+    if (lastPublish === 0 || performance.now() - lastPublish >= 100 || indexed === entries.length) {
+        publish();
     }
+    if (indexed < entries.length) timer = setTimeout(prepare, 0);
+}
+
+self.onmessage = (event: MessageEvent<Request>) => {
+    request = event.data;
+    if (request.entries) {
+        clearTimeout(timer);
+        const append = entries.length <= request.entries.length &&
+            entries.every((name, index) => name === request.entries![index]);
+        if (!append) {
+            source = makeRoot();
+            folders = new Map();
+            dirty.clear();
+            indexed = 0;
+        }
+        entries = request.entries;
+        lastPublish = 0;
+        prepare();
+    } else {
+        publish();
+    }
+};
+
+function publish() {
+    lastPublish = performance.now();
+    for (const folder of dirty) {
+        folder.children!.sort((a, b) => Number(!!b.children) - Number(!!a.children) || collator.compare(a.name, b.name));
+    }
+    dirty.clear();
+    const {id, query, expanded} = request;
     const q = query.toLowerCase();
     let count = 0;
     const branches: string[] = [];
@@ -63,7 +92,18 @@ self.onmessage = (event: MessageEvent<{ entries?: Entry[]; query: string; id: nu
         return {...node, children};
     }
 
-    const root = q ? filter(source)! : source;
-    self.postMessage({id, root, count: q ? count : total, branches, query});
-};
+    const open = new Set(expanded);
+
+    function visible(node: Node): Node {
+        if (!node.children) return node;
+        if (node.id !== 'root' && !open.has(node.id)) {
+            return {...node, childCount: node.children.length, children: []};
+        }
+        return {...node, children: node.children.map(visible)};
+    }
+
+    const root = q ? filter(source)! : visible(source);
+    self.postMessage({id, root, count: q ? count : indexed, branches, query, done: indexed === entries.length});
+}
+
 export {};
