@@ -1,15 +1,19 @@
-import {createContext, useContext} from 'react';
 import {invoke as rawInvoke} from '@tauri-apps/api/core';
+import {createContext, useContext} from 'react';
 
 export type ResourceEntry = { name: string; path: string; size: number; changed: boolean };
+export type ElementsProfile = { version: number; variant: string | null };
 export type ResourceScope = {
     id: number;
     path: string;
     kind: 'project' | 'archive' | 'file';
+    clientVersion?: string;
+    gshopVersion?: number | null;
+    elementsProfile?: ElementsProfile | null;
     entries: ResourceEntry[]
 };
 type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
-export const ResourceContext = createContext<{ invoke: Invoke; active: boolean } | null>(null);
+export const ResourceContext = createContext<{ invoke: Invoke; active: boolean; clientVersion?: string } | null>(null);
 
 export function useResourceInvoke(): Invoke {
     return useContext(ResourceContext)?.invoke ?? rawInvoke;
@@ -38,4 +42,8 @@ export function resourceInvoke(scope: ResourceScope, onOpen: (name: string) => v
         }
         return rawInvoke<T>(command, args);
     };
+}
+
+export function useClientVersion() {
+    return useContext(ResourceContext)?.clientVersion ?? '1.5.5-lrpw';
 }

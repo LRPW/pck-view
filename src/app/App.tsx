@@ -1,16 +1,6 @@
-import {normalizeUiFontNames} from '../features/media/ui-fonts';
-import {ElementsEditor} from '../features/editor/ElementsEditor';
-import {ProjectWorkspace} from '../features/editor/ProjectWorkspace';
-import {useUnsavedGuard} from '../features/editor/unsaved';
-import {NativeGfxPreview} from '../features/media/NativeGfxPreview';
-import {TextEditor, type TextEditorHandle} from '../features/editor/TextEditor';
-import {GfxPreview} from "../features/media/GfxPreview";
-import {InterfaceEditor} from "../features/media/InterfaceEditor";
-import {interfaceType} from "../features/media/InterfacePreview";
-import {message, setLanguage, t, useLanguage} from "../i18n/index";
-import React, {useCallback, useEffect, useMemo, useRef, useState,} from "react";
-
-import {Badge, Box, Button, Flex, Heading, Input, Text,} from "@chakra-ui/react";
+import {matchesShortcut} from './shortcuts';
+import {sourceText} from "../i18n";
+import {Badge, Box, Button, Field, Flex, Heading, Input, Select, Text} from '@chakra-ui/react';
 import {invoke} from "@tauri-apps/api/core";
 import {emitTo, listen} from "@tauri-apps/api/event";
 import {
@@ -20,17 +10,33 @@ import {
     open,
     save,
 } from "@tauri-apps/plugin-dialog";
+import type {ComponentProps} from "react";
+import {useCallback, useEffect, useMemo, useRef, useState,} from "react";
+import {AccordionItem, AccordionItemContent, AccordionItemTrigger, AccordionRoot} from "../components/ui/accordion";
+import {ProgressBar, ProgressRoot} from "../components/ui/progress";
+import {SelectContent, SelectItem, SelectRoot, SelectTrigger, SelectValueText} from "../components/ui/select";
+import {ElementsEditor} from '../features/editor/ElementsEditor';
+import {ProjectWorkspace} from '../features/editor/ProjectWorkspace';
+import {selectCollection} from '../features/editor/select-collection';
+import {TextEditor, type TextEditorHandle} from '../features/editor/TextEditor';
+import {useUnsavedGuard} from '../features/editor/unsaved';
+import {GfxPreview} from "../features/media/GfxPreview";
+import {InterfaceEditor} from "../features/media/InterfaceEditor";
+import {interfaceType} from "../features/media/InterfacePreview";
+import {NativeGfxPreview} from '../features/media/NativeGfxPreview';
+import {normalizeUiFontNames} from '../features/media/ui-fonts';
+import {message, setLanguage, t, useLanguage} from "../i18n/index";
 
+import {getCurrentWindow} from "@tauri-apps/api/window";
 import {ArchiveTree} from "../features/archive/ArchiveTree";
 import {MediaPreview, mediaType} from "../features/media/MediaPreview";
 import {type SearchAction, type SearchSnapshot,} from "../features/search/SearchWindow";
-import {getCurrentWindow} from "@tauri-apps/api/window";
 
 function confirm(text: string, options: ConfirmDialogOptions = {}) {
     return nativeConfirm(text, {
         title: "PW Forge",
-        okLabel: t("Да"),
-        cancelLabel: t("Отмена"),
+        okLabel: t("Yes"),
+        cancelLabel: t("Cancel"),
         ...options,
     });
 }
@@ -81,7 +87,7 @@ export function App() {
         const listener = listen<OperationProgress>("pck-progress", (event) => {
             if (!mounted) return;
             if (
-                event.payload.operation === "Поиск по содержимому" &&
+                sourceText(event.payload.operation) === "Content search" &&
                 activeSearch.current !== undefined
             )
                 setSearchProgress(event.payload);
@@ -102,7 +108,7 @@ export function App() {
         [dirty, setDirty] = useState(false),
         [pending, setPending] = useState(false),
         [busy, setBusy] = useState(false),
-        [status, setStatus] = useState("Откройте PCK, чтобы начать"),
+        [status, setStatus] = useState(t("Open a PCK to get started")),
         [tab, setTab] = useState("text"),
         [newName, setNewName] = useState("");
     const [dialogTrail, setDialogTrail] = useState<number[]>([]);
@@ -143,7 +149,7 @@ export function App() {
         const requested = normalize(startupEntry.current);
         startupEntry.current = null;
         const index = archive.entries.findIndex(e => normalize(e.name) === requested);
-        if (index < 0) setStatus('Ресурс не найден: ' + requested);
+        if (index < 0) setStatus("Resource not found: " + requested);
         else chooseHandler.current(index);
     }, [archive]);
     useEffect(() => {
@@ -214,7 +220,7 @@ export function App() {
     ]);
     useEffect(() => {
         const handler = (event: KeyboardEvent) => {
-            if ((event.ctrlKey || event.metaKey) && !event.altKey && event.code === 'KeyO') {
+            if (matchesShortcut(event, 'open')) {
                 event.preventDefault();
                 if (!busy && !searching && !event.repeat) void openFile();
                 return;
@@ -225,18 +231,16 @@ export function App() {
                 setFindOpen(false);
                 return;
             }
-            if (event.code === "F3" && matches?.length) {
+            if ((matchesShortcut(event, 'next') || matchesShortcut(event, 'previous')) && matches?.length) {
                 event.preventDefault();
                 void openHit(
-                    (activeHit + (event.shiftKey ? -1 : 1) + matches.length) %
+                    (activeHit + (matchesShortcut(event, 'previous') ? -1 : 1) + matches.length) %
                     matches.length,
                 );
                 return;
             }
             if (
-                (event.ctrlKey || event.metaKey) &&
-                event.shiftKey &&
-                event.code === "KeyF"
+                matchesShortcut(event, 'search')
             ) {
                 event.preventDefault();
                 setFindOpen(true);
@@ -244,13 +248,12 @@ export function App() {
                 searchInput.current?.select();
                 return;
             }
-            if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+            if (!matchesShortcut(event, 'save') && !matchesShortcut(event, 'saveAs')) return;
             const key = event.code;
-            if (key !== "KeyS" && key !== "KeyO") return;
+
             event.preventDefault();
             if (busy || searching || event.repeat) return;
-            if (key === "KeyO") void openArchive();
-            else if (archive) void saveArchive(event.shiftKey);
+            if (archive) void saveArchive(matchesShortcut(event, 'saveAs'));
         };
         window.addEventListener("keydown", handler);
         return () => window.removeEventListener("keydown", handler);
@@ -325,10 +328,10 @@ export function App() {
             setTruncated(result.truncated);
             setSearchErrors(result.errors);
             setStatus(
-                (result.cancelled ? "Поиск отменён" : "Поиск завершён") +
-                ": найдено совпадений " +
+                (result.cancelled ? t("Search cancelled") : t("Search complete")) +
+                ": matches found: " +
                 result.matches.length.toLocaleString() +
-                ", ошибок чтения: " +
+                ", read errors: " +
                 result.errors.length,
             );
         } catch (error) {
@@ -463,7 +466,7 @@ export function App() {
     async function discard() {
         return (
             !pending ||
-            (await confirm(t("Отбросить несохранённые изменения текста?"), {
+            (await confirm(t("Discard unsaved text changes?"), {
                 title: "PW Forge",
                 kind: "warning",
             }))
@@ -539,7 +542,7 @@ export function App() {
     async function openArchive(selectedPath?: string) {
         if (
             (dirty || pending) &&
-            !(await confirm(t("Открыть другой архив и отбросить изменения?")))
+            !(await confirm(t("Open another archive and discard changes?")))
         )
             return;
         const path = selectedPath ?? await open({
@@ -552,7 +555,7 @@ export function App() {
                 setSelected(undefined);
                 setDirty(false);
                 setPending(false);
-                setStatus("Архив открыт");
+                setStatus(t("Archive opened"));
                 setElementsVisible(false);
                 setProjectVisible(false);
             });
@@ -576,7 +579,10 @@ export function App() {
             setElementsPath(path);
             setElementsVisible(true);
         } else {
-            await showMessage(`Для файла «${name}» пока нет редактора.`, {title: 'PW Forge', kind: 'error'});
+            await showMessage(t("No editor is available for “{value0}”.", {value0: name}), {
+                title: 'PW Forge',
+                kind: 'error'
+            });
         }
     }
 
@@ -595,7 +601,7 @@ export function App() {
         setBytes(encoded);
         setDirty(true);
         setPending(false);
-        setStatus("Изменения применены в памяти");
+        setStatus(t("Changes applied in memory"));
     }
 
     async function importEntry(replace: boolean) {
@@ -618,7 +624,7 @@ export function App() {
             setSelected(undefined);
             setDirty(true);
             setPending(false);
-            setStatus("Файл импортирован");
+            setStatus(t("File imported"));
         });
     }
 
@@ -635,14 +641,14 @@ export function App() {
                 if (pending) await apply();
                 setArchive(await invoke<Archive>("save_archive", {path}));
                 setDirty(false);
-                setStatus("Сохранено: " + path);
+                setStatus("Saved: " + path);
             });
     }
 
     async function extractArchive() {
         const directory = await open({
             directory: true,
-            title: t("Папка для распаковки PCK"),
+            title: t("Extract PCK to folder"),
         });
         if (typeof directory !== "string") return;
         await run(async () => {
@@ -652,10 +658,10 @@ export function App() {
                 directory,
             });
             setStatus(
-                "Распаковано " +
+                "Extracted " +
                 result.extracted.toLocaleString() +
-                " файлов в " +
-                directory + "; ошибок: " + result.errors.length,
+                " files to " +
+                directory + "; errors: " + result.errors.length,
             );
             setExtractionErrors(result.errors);
         });
@@ -666,18 +672,18 @@ export function App() {
             (dirty || pending) &&
             !(await confirm(
                 t(
-                    "Создать архив из папки и закрыть текущий архив с изменениями?",
+                    "Create an archive from a folder and discard changes in the current archive?",
                 ),
             ))
         )
             return;
         const directory = await open({
             directory: true,
-            title: t("Папка с ресурсами для упаковки"),
+            title: t("Folder to pack"),
         });
         if (typeof directory !== "string") return;
         const path = await save({
-            title: t("Сохранить PCK вне исходной папки"),
+            title: t("Save PCK outside the source folder"),
             filters: [{name: "PCK", extensions: ["pck"]}],
         });
         if (!path) return;
@@ -693,9 +699,9 @@ export function App() {
             setDirty(false);
             setPending(false);
             setStatus(
-                "Упаковано " +
+                "Packed " +
                 result.entries.length.toLocaleString() +
-                " файлов: " +
+                " files: " +
                 path,
             );
         });
@@ -720,14 +726,92 @@ export function App() {
                 .join("\n"),
         [bytes],
     );
+    const handleProjectWorkspaceElements: ComponentProps<typeof ProjectWorkspace>["onElements"] = (path, context) => {
+        setElementsPath(path);
+        setElementsProject(context);
+        setElementsVisible(true);
+    };
+    const handleButtonClick: ComponentProps<typeof Button>["onClick"] = () => {
+        if (!entry) return;
+        if (
+            mediaType(entry.name) &&
+            tab !== "text"
+        )
+            decode(bytes, encoding);
+        setTab("text");
+    };
+    const handleSelectRootValueChange: ComponentProps<typeof Select.Root>["onValueChange"] = async ({value: [value]}) => {
+        const v = value;
+        if (await discard()) {
+            setEncoding(v);
+            decode(bytes, v);
+        }
+    };
+    const handleInterfaceEditorOpenDialog: ComponentProps<typeof InterfaceEditor>["onOpenDialog"] = file => {
+        if (busy || searching || !archive || !entry) return;
+        const normalize = (path: string) => path.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+        const requested = normalize(file);
+        const current = normalize(entry.name);
+        const directory = current.slice(0, current.lastIndexOf("/") + 1);
+        const candidates = [directory + requested, requested, "interfaces/" + requested];
+        let index = -1;
+        for (const path of candidates) {
+            index = archive.entries.findIndex(item => normalize(item.name) === path);
+            if (index >= 0) break;
+        }
+        if (index < 0) {
+            setStatus("DialogFile not found: " + file);
+            return;
+        }
+        void choose(index, undefined, [...(dialogTrail.length ? dialogTrail : [selected!]), index]);
+    };
+    const handleButtonClick2: ComponentProps<typeof Button>["onClick"] = async () => {
+        if (!entry) return;
+        const path = await save({
+            defaultPath: entry.name
+                .split("\\")
+                .pop(),
+        });
+        if (path)
+            run(async () => {
+                await invoke("export_entry", {
+                    index: selected,
+                    path,
+                });
+                setStatus(
+                    "Exported: " + path,
+                );
+            });
+    };
+    const handleButtonClick3: ComponentProps<typeof Button>["onClick"] = async () => {
+        if (!entry) return;
+        if (
+            await confirm(
+                t("Delete ") +
+                entry.name +
+                t(" from the archive?"),
+            )
+        )
+            run(async () => {
+                setArchive(
+                    await invoke<Archive>(
+                        "edit_entry",
+                        {
+                            index: selected,
+                            name: "",
+                            data: null,
+                        },
+                    ),
+                );
+                setSelected(undefined);
+                setPending(false);
+                setDirty(true);
+            });
+    };
     return (
-        <Flex direction="column" h="100vh" bg="#0b1018" color="#dae3ef">
+        <Flex direction="column" h="100vh" bg="var(--chakra-colors-bg)" color="var(--chakra-colors-fg)">
             <ProjectWorkspace visible={projectVisible && !elementsVisible} onBack={() => setProjectVisible(false)}
-                              onOpen={() => void openFile()} onElements={(path, context) => {
-                setElementsPath(path);
-                setElementsProject(context);
-                setElementsVisible(true);
-            }}/>
+                              onOpen={() => void openFile()} onElements={handleProjectWorkspaceElements}/>
             <ElementsEditor visible={elementsVisible} onOpen={() => void openFile()} requestedPath={elementsPath}
                             requestedProject={elementsProject} onBack={() => setElementsVisible(false)}/>
             <Flex
@@ -735,14 +819,14 @@ export function App() {
                 gap="4"
                 wrap="wrap"
                 align="center"
-                borderBottom="1px solid #253044"
+                borderBottom="1px solid var(--chakra-colors-border)"
             >
                 <Box mr="auto">
                     <Heading size="xl">
-                        <span style={{color: "#63e2c5"}}>PW Forge</span>
+                        <span style={{color: "var(--chakra-colors-teal-400)"}}>PW Forge</span>
                     </Heading>
                 </Box>
-                <Button onClick={() => setProjectVisible(true)}>Проект</Button>
+                <Button onClick={() => setProjectVisible(true)}>{t("Project")}</Button>
                 <Flex gap="1" role="group" aria-label="Language">
                     <Button
                         size="sm"
@@ -764,61 +848,61 @@ export function App() {
                     </Button>
                 </Flex>
                 <Button disabled={busy || searching} onClick={() => void openFile()}>
-                    {t("Открыть")}
+                    {t("Open")}
                 </Button>
                 <Button disabled={busy || searching} onClick={packFolder}>
-                    {t("Запаковать в PCK")}
+                    {t("Pack into PCK")}
                 </Button>
                 <Button
                     disabled={busy || searching || !archive}
                     onClick={extractArchive}
                 >
-                    {t("Распаковать всё")}
+                    {t("Extract all")}
                 </Button>
                 <Button
                     disabled={busy || searching || !archive}
                     onClick={() => importEntry(false)}
                 >
-                    {t("Добавить файл")}
+                    {t("Add file")}
                 </Button>
                 <Button
                     colorPalette="teal"
                     disabled={busy || searching || !archive}
                     onClick={() => saveArchive()}
                 >
-                    {t("Сохранить")}
+                    {t("Save")}
                     {dirty || pending ? " •" : ""}
                 </Button>
                 <Button
                     disabled={busy || searching || !archive}
                     onClick={() => saveArchive(true)}
                 >
-                    {t("Сохранить как…")}
+                    {t("Save as…")}
                 </Button>
             </Flex>
             <Flex flex="1" overflow="hidden">
                 <Flex
                     w="390px" className="archive-sidebar-resizable"
                     direction="column"
-                    borderRight="1px solid #253044"
+                    borderRight="1px solid var(--chakra-colors-border)"
                     p="4"
                     gap="3"
                 >
                     <Text fontSize="sm" wordBreak="break-all">
-                        {archive?.path || t("Архив не выбран")}
+                        {archive?.path || t("No archive selected")}
                     </Text>
-                    <Input
-                        placeholder={t("Путь для добавления: folder/file.ext")}
+                    <Field.Root width="auto"><Input
+                        placeholder={t("New entry path: folder/file.ext")}
                         value={newName}
                         onChange={(e) => setNewName(e.target.value)}
-                    />
-                    <Input
-                        placeholder={t("Поиск по пути…")}
+                    /></Field.Root>
+                    <Field.Root width="auto"><Input
+                        placeholder={t("Filter by path…")}
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                    />
+                    /></Field.Root>
                     <Button size="sm" onClick={() => setFindOpen(true)}>
-                        {t("Поиск в файлах")} · Ctrl+Shift+F
+                        {t("Find in Files")} · Ctrl+Shift+F
                     </Button>
                     <ArchiveTree
                         entries={archive?.entries ?? EMPTY_ENTRIES}
@@ -839,10 +923,10 @@ export function App() {
                                     <Button size="sm" disabled={busy || searching} onClick={() => {
                                         const path = dialogTrail.slice(0, -1);
                                         void choose(path[path.length - 1], undefined, path);
-                                    }}>← Назад</Button>}
-                                {dialogTrail.map((index, position) => <span key={`${position}:${index}`}><button
+                                    }}>{t("← Back")}</Button>}
+                                {dialogTrail.map((index, position) => <span key={`${position}:${index}`}><Button
                                     disabled={busy || searching || position === dialogTrail.length - 1}
-                                    onClick={() => void choose(index, undefined, dialogTrail.slice(0, position + 1))}>{archive?.entries[index]?.name.split(/[\\/]/).pop()}</button>
+                                    onClick={() => void choose(index, undefined, dialogTrail.slice(0, position + 1))}>{archive?.entries[index]?.name.split(/[\\/]/).pop()}</Button>
                                     {position < dialogTrail.length - 1 ? ' / ' : ''}</span>)}
                             </Flex>}
                             <Flex gap="3" align="center" wrap="wrap">
@@ -851,42 +935,30 @@ export function App() {
                                         size="sm"
                                         onClick={() => setTab("preview")}
                                     >
-                                        {t("Предпросмотр")}
+                                        {t("Preview")}
                                     </Button>
                                 )}
                                 <Button
                                     size="sm"
                                     disabled={busy || searching}
-                                    onClick={() => {
-                                        if (
-                                            mediaType(entry.name) &&
-                                            tab !== "text"
-                                        )
-                                            decode(bytes, encoding);
-                                        setTab("text");
-                                    }}
+                                    onClick={handleButtonClick}
                                 >
-                                    {t("Текст")}
+                                    {t("Text")}
                                 </Button>
                                 <Button size="sm" onClick={() => setTab("hex")}>
                                     HEX
                                 </Button>
-                                <select
-                                    disabled={busy || searching}
-                                    value={encoding}
-                                    onChange={async (e) => {
-                                        const v = e.target.value;
-                                        if (await discard()) {
-                                            setEncoding(v);
-                                            decode(bytes, v);
-                                        }
-                                    }}
-                                >
-                                    <option value="utf-8">UTF-8</option>
-                                    <option value="gbk">GBK</option>
-                                    <option value="utf-16le">UTF-16 LE</option>
-                                    <option value="utf-16be">UTF-16 BE</option>
-                                </select>
+                                <SelectRoot size="sm" lazyMount unmountOnExit minW="140px"
+                                            collection={selectCollection(<>
+                                                <option value="utf-8">UTF-8</option>
+                                                <option value="gbk">GBK</option>
+                                                <option value="utf-16le">UTF-16 LE</option>
+                                                <option value="utf-16be">UTF-16 BE</option>
+                                            </>)} value={[String(encoding)]}
+                                            onValueChange={handleSelectRootValueChange}
+                                            disabled={busy || searching}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                                    <SelectItem key={select.collection.getItemValue(item)}
+                                                item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot>
                             </Flex>
                             {tab === "preview" && /\.(mox|ecm|smd|ski|bon)$/i.test(entry.name) ? <NativeGfxPreview
                                 file={entry.name}/> : tab === "preview" && /\.gfx$/i.test(entry.name) ?
@@ -896,24 +968,8 @@ export function App() {
                                                      initialView={interfaceViews.current.get(`${archive?.path}:${entry.name}`)}
                                                      onViewChange={view => {
                                                          interfaceViews.current.set(`${archive?.path}:${entry.name}`, view);
-                                                     }} onOpenDialog={file => {
-                                        if (busy || searching || !archive) return;
-                                        const normalize = (path: string) => path.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
-                                        const requested = normalize(file);
-                                        const current = normalize(entry.name);
-                                        const directory = current.slice(0, current.lastIndexOf("/") + 1);
-                                        const candidates = [directory + requested, requested, "interfaces/" + requested];
-                                        let index = -1;
-                                        for (const path of candidates) {
-                                            index = archive.entries.findIndex(item => normalize(item.name) === path);
-                                            if (index >= 0) break;
-                                        }
-                                        if (index < 0) {
-                                            setStatus("Не найден DialogFile: " + file);
-                                            return;
-                                        }
-                                        void choose(index, undefined, [...(dialogTrail.length ? dialogTrail : [selected!]), index]);
-                                    }} text={text} entries={archive?.entries ?? EMPTY_ENTRIES}
+                                                     }} onOpenDialog={handleInterfaceEditorOpenDialog} text={text}
+                                                     entries={archive?.entries ?? EMPTY_ENTRIES}
                                                      disabled={busy || searching} onChange={value => {
                                         setText(value);
                                         setPending(true);
@@ -945,7 +1001,7 @@ export function App() {
                                     >
                                         {hex}
                                         {bytes.length > 65536
-                                            ? t("\n… первые 64 KiB")
+                                            ? t("\n… first 64 KiB")
                                             : ""}
                                     </Box>
                                 )}
@@ -954,66 +1010,27 @@ export function App() {
                                     disabled={busy || searching || !pending}
                                     onClick={() => run(apply)}
                                 >
-                                    {t("Применить текст")}
+                                    {t("Apply text")}
                                 </Button>
                                 <Button
                                     disabled={busy || searching}
                                     onClick={() => importEntry(true)}
                                 >
-                                    {t("Заменить файлом")}
+                                    {t("Replace from file")}
                                 </Button>
                                 <Button
                                     disabled={busy || searching}
-                                    onClick={async () => {
-                                        const path = await save({
-                                            defaultPath: entry.name
-                                                .split("\\")
-                                                .pop(),
-                                        });
-                                        if (path)
-                                            run(async () => {
-                                                await invoke("export_entry", {
-                                                    index: selected,
-                                                    path,
-                                                });
-                                                setStatus(
-                                                    "Экспортировано: " + path,
-                                                );
-                                            });
-                                    }}
+                                    onClick={handleButtonClick2}
                                 >
-                                    {t("Экспорт")}
+                                    {t("Export")}
                                 </Button>
                                 <Button
                                     colorPalette="red"
                                     variant="outline"
                                     disabled={busy || searching}
-                                    onClick={async () => {
-                                        if (
-                                            await confirm(
-                                                t("Удалить ") +
-                                                entry.name +
-                                                t(" из архива?"),
-                                            )
-                                        )
-                                            run(async () => {
-                                                setArchive(
-                                                    await invoke<Archive>(
-                                                        "edit_entry",
-                                                        {
-                                                            index: selected,
-                                                            name: "",
-                                                            data: null,
-                                                        },
-                                                    ),
-                                                );
-                                                setSelected(undefined);
-                                                setPending(false);
-                                                setDirty(true);
-                                            });
-                                    }}
+                                    onClick={handleButtonClick3}
                                 >
-                                    {t("Удалить")}
+                                    {t("Delete")}
                                 </Button>
                             </Flex>
                         </>
@@ -1025,7 +1042,7 @@ export function App() {
                             direction="column"
                             gap="3"
                         >
-                            <Text color="#8393aa">{t("Файл не выбран")}</Text>
+                            <Text color="var(--chakra-colors-fg-muted)">{t("No file selected")}</Text>
                         </Flex>
                     )}
                 </Flex>
@@ -1033,7 +1050,7 @@ export function App() {
             <Box
                 px="5"
                 py="3"
-                borderTop="1px solid #253044"
+                borderTop="1px solid var(--chakra-colors-border)"
                 fontSize="sm"
                 role="status"
             >
@@ -1045,7 +1062,7 @@ export function App() {
                                     ? message(progress.operation) +
                                     " · " +
                                     message(progress.stage)
-                                    : t("Подготовка…")}
+                                    : t("Preparing…")}
                             </Text>
                             <Text>
                                 {progress && progress.total > 0
@@ -1061,33 +1078,28 @@ export function App() {
                                     progress.completed.toLocaleString() +
                                     " / " +
                                     progress.total.toLocaleString()
-                                    : t("Выполняется…")}
+                                    : t("Working…")}
                             </Text>
                         </Flex>
-                        <progress
-                            className="operation-progress"
-                            aria-label={
-                                (progress?.stage
-                                    ? message(progress.stage)
-                                    : undefined) || t("Обработка")
-                            }
-                            max={progress?.total || 1}
-                            value={
-                                progress && progress.total > 0
-                                    ? progress.completed
-                                    : undefined
-                            }
-                        />
+                        <ProgressRoot className="operation-progress" aria-label={
+                                                                         (progress?.stage
+                                                                             ? message(progress.stage)
+                                                                             : undefined) || t("Processing")
+                                                                     } max={progress?.total || 1} value={
+                                                                                                      progress && progress.total > 0
+                                                                                                          ? progress.completed
+                                                                                                          : undefined
+                                                                                                  }><ProgressBar/></ProgressRoot>
                     </>
                 ) : (
                     message(status)
                 )}
             </Box> {extractionErrors.length > 0 && <Box px="5" pb="3">
-            <details>
-                <summary>{t("Ошибки распаковки:")} {extractionErrors.length}</summary>
-                <Box maxH="160px" overflow="auto" fontSize="xs"
-                     wordBreak="break-all">{extractionErrors.map((error, index) => <Text
-                    key={index}>{message(error)}</Text>)}</Box></details>
+            <AccordionRoot collapsible defaultValue={false ? ["content"] : []}><AccordionItem
+                value="content"><AccordionItemTrigger>{t("Extraction errors:")}{extractionErrors.length}</AccordionItemTrigger><AccordionItemContent><Box
+                maxH="160px" overflow="auto" fontSize="xs"
+                wordBreak="break-all">{extractionErrors.map((error, index) => <Text
+                key={index}>{message(error)}</Text>)}</Box></AccordionItemContent></AccordionItem></AccordionRoot>
         </Box>}
         </Flex>
     );

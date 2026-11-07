@@ -7,7 +7,7 @@ export function EditorProgress({label}: { label: string }) {
 }
 
 export function EditorSkeleton({rows = 6}: { rows?: number }) {
-    return <Stack className="editor-skeleton dark" gap="2" p="2" aria-hidden="true">
+    return <Stack className="editor-skeleton" gap="2" p="2" aria-hidden="true">
         {Array.from({length: rows}, (_, i) => <Skeleton key={i} height="7"/>)}
     </Stack>;
 }

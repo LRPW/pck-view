@@ -8,7 +8,14 @@ mod detail;
 pub(super) use detail::{export_npc_talks, translate_npc_talks};
 
 const MAGIC: u32 = 0x93858361;
-const VERSION: u32 = 125;
+const SUPPORTED_VERSIONS: &[u32] = &[
+    43, 52, 53, 54, 55, 56, 57, 59, 60, 63, 64, 68, 69, 75, 78, 79, 80, 81, 82, 83, 84,
+    85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104,
+    105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
+    122, 123, 124, 125, 126, 127, 128, 129, 130, 135, 137, 139, 140, 146, 147, 153, 156,
+    157, 158, 161, 162, 163, 164, 167, 175, 176, 177, 178, 180, 181, 182, 183, 185, 186,
+    187, 188, 189, 190, 191, 192, 193, 194, 195, 198, 215, 216, 217, 218, 219, 220,
+];
 const NAME_UNITS: usize = 30;
 const PREFIX: usize = 4 + NAME_UNITS * 2;
 
@@ -25,7 +32,7 @@ fn xor(bytes: &mut [u8], offset: usize) {
 fn u32_at(bytes: &[u8], offset: usize, encrypted: bool) -> Result<u32> {
     let mut word: [u8; 4] = bytes
         .get(offset..offset + 4)
-        .ok_or("Файл tasks.data обрезан")?
+        .ok_or("Truncated tasks.data file")?
         .try_into()
         .unwrap();
     if encrypted {
@@ -35,6 +42,7 @@ fn u32_at(bytes: &[u8], offset: usize, encrypted: bool) -> Result<u32> {
 }
 
 struct Layout {
+    version: u32,
     encrypted: bool,
     offsets: Vec<usize>,
 }
@@ -49,28 +57,29 @@ impl PackKind {
         if self == Self::Static {
             return layout(bytes);
         }
-        let header = bytes.get(..12).ok_or("Заголовок пакета обрезан")?;
+        let header = bytes.get(..12).ok_or("Truncated pack header")?;
         let size = u32::from_le_bytes(header[..4].try_into().unwrap()) as usize;
         let version = u16::from_le_bytes(header[8..10].try_into().unwrap());
         let count = u16::from_le_bytes(header[10..12].try_into().unwrap()) as usize;
         if size != bytes.len() {
-            return Err("Размер пакета не совпадает с заголовком".into());
+            return Err("Pack size does not match its header".into());
         }
         let offsets = match self {
             Self::Npc if version == 1 && size == 12 + count * 12 => {
                 (0..count).map(|i| 12 + i * 12).collect()
             }
             Self::Dynamic if version == 10 => detail::dynamic_offsets(bytes, count)?,
-            _ => return Err("Неподдерживаемый формат пакета заданий".into()),
+            _ => return Err("Unsupported quest pack format".into()),
         };
         Ok(Layout {
             encrypted: false,
+            version: u32::from(version),
             offsets,
         })
     }
-    fn parse(self, bytes: &[u8]) -> Result<detail::TaskNode> {
+    fn parse(self, bytes: &[u8], version: u32) -> Result<detail::TaskNode> {
         match self {
-            Self::Static => detail::parse(bytes),
+            Self::Static => detail::parse(bytes, version),
             Self::Dynamic => detail::parse_dynamic(bytes),
             Self::Npc => detail::parse_npc(bytes),
         }
@@ -85,7 +94,7 @@ struct CachedPack {
 static CACHE: Mutex<Option<CachedPack>> = Mutex::new(None);
 impl Layout {
     fn root(&self, bytes: &[u8], row: usize) -> Result<(usize, Vec<u8>)> {
-        let start = *self.offsets.get(row).ok_or("Нет задания")?;
+        let start = *self.offsets.get(row).ok_or("No quest")?;
         let end = self
             .offsets
             .iter()
@@ -102,16 +111,21 @@ impl Layout {
 }
 
 fn layout(bytes: &[u8]) -> Result<Layout> {
-    let encrypted = u32_at(bytes, 0, false)? != MAGIC;
-    if u32_at(bytes, 0, encrypted)? != MAGIC || u32_at(bytes, 4, encrypted)? != VERSION {
-        return Err("Поддерживается tasks.data версии 125".into());
+    let encrypted = !matches!(u32_at(bytes, 0, false)?, MAGIC | 0);
+    if !matches!(u32_at(bytes, 0, encrypted)?, MAGIC | 0) {
+        return Err("Invalid tasks.data signature".into());
     }
+    let version = u32_at(bytes, 4, encrypted)?;
+    if SUPPORTED_VERSIONS.binary_search(&version).is_err() {
+        return Err(format!("Unsupported tasks.data version {version}").into());
+    }
+    let prefix = id_offset(version) + PREFIX;
     let count = u32_at(bytes, 8, encrypted)? as usize;
     let end = 12usize
-        .checked_add(count.checked_mul(4).ok_or("Неверный размер индекса")?)
-        .ok_or("Неверный размер индекса")?;
+        .checked_add(count.checked_mul(4).ok_or("Invalid index size")?)
+        .ok_or("Invalid index size")?;
     if end > bytes.len() {
-        return Err("Таблица заданий обрезана".into());
+        return Err("Truncated quest table".into());
     }
     let offsets = (0..count)
         .map(|i| u32_at(bytes, 12 + i * 4, encrypted).map(|value| value as usize))
@@ -120,12 +134,16 @@ fn layout(bytes: &[u8]) -> Result<Layout> {
     sorted.sort_unstable();
     if sorted
         .iter()
-        .any(|&offset| offset < end || offset > bytes.len().saturating_sub(PREFIX))
-        || sorted.windows(2).any(|pair| pair[1] - pair[0] < PREFIX)
+        .any(|&offset| offset < end || offset > bytes.len().saturating_sub(prefix))
+        || sorted.windows(2).any(|pair| pair[1] - pair[0] < prefix)
     {
-        return Err("Некорректные смещения заданий".into());
+        return Err("Invalid quest offsets".into());
     }
-    Ok(Layout { encrypted, offsets })
+    Ok(Layout { encrypted, offsets, version })
+}
+
+fn id_offset(version: u32) -> usize {
+    if version >= 153 { 2 } else { 0 }
 }
 
 fn revision(bytes: &[u8]) -> String {
@@ -145,6 +163,7 @@ struct TaskRow {
 
 #[derive(Serialize)]
 pub struct TaskPack {
+    version: u32,
     revision: String,
     rows: Vec<TaskRow>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -156,9 +175,11 @@ pub struct TaskPack {
 }
 
 fn task_kind(scope: &ide::Scope, index: usize) -> Result<PackKind> {
-    let entry = scope.entries.get(index).ok_or("Нет файла")?;
-    match entry
-        .name
+    let entry = scope.entries.get(index).ok_or("No file")?;
+    kind_from_name(&entry.name)
+}
+fn kind_from_name(name: &str) -> Result<PackKind> {
+    match name
         .rsplit(['/', '\\'])
         .next()
         .unwrap_or("")
@@ -168,7 +189,7 @@ fn task_kind(scope: &ide::Scope, index: usize) -> Result<PackKind> {
         "tasks.data" => Ok(PackKind::Static),
         "dyn_tasks.data" => Ok(PackKind::Dynamic),
         "task_npc.data" => Ok(PackKind::Npc),
-        _ => Err("Выберите пакет заданий".into()),
+        _ => Err("Select a quest pack".into()),
     }
 }
 
@@ -178,7 +199,16 @@ pub(super) fn export_texts(
     bytes: &[u8],
     emit: &mut dyn FnMut(String, &str) -> Result<()>,
 ) -> Result<()> {
-    let kind = task_kind(scope, index)?;
+    let name = &scope.entries.get(index).ok_or("No file")?.name;
+    export_file_texts(name, bytes, emit)
+}
+
+pub(super) fn export_file_texts(
+    name: &str,
+    bytes: &[u8],
+    emit: &mut dyn FnMut(String, &str) -> Result<()>,
+) -> Result<()> {
+    let kind = kind_from_name(name)?;
     let layout = kind.layout(bytes)?;
     let mut ends = layout.offsets.clone();
     ends.sort_unstable();
@@ -189,7 +219,7 @@ pub(super) fn export_texts(
         if layout.encrypted {
             xor(&mut record, start);
         }
-        let node = kind.parse(&record)?;
+        let node = kind.parse(&record, layout.version)?;
         detail::export_texts(&node, &format!("/tasks/{row}/{}", node.id), emit)?;
     }
     Ok(())
@@ -207,7 +237,7 @@ pub(super) fn translate_texts(
     let mut changes = Vec::new();
     for &row in rows {
         let (_, record) = layout.root(bytes, row)?;
-        let node = kind.parse(&record)?;
+        let node = kind.parse(&record, layout.version)?;
         let mut fields = HashMap::new();
         detail::translate_texts(
             &node,
@@ -261,7 +291,7 @@ pub async fn tasks_open(
             }
             if kind != PackKind::Static {
                 let (_, record) = layout.root(&bytes, row)?;
-                let node = kind.parse(&record)?;
+                let node = kind.parse(&record, layout.version)?;
                 rows.push(TaskRow {
                     id: node.id,
                     name: node.name,
@@ -270,6 +300,7 @@ pub async fn tasks_open(
                 });
                 continue;
             }
+            let offset = offset + id_offset(layout.version);
             let id = u32_at(&bytes, offset, layout.encrypted)?;
             let mut name = bytes[offset + 4..offset + PREFIX].to_vec();
             if layout.encrypted {
@@ -283,7 +314,7 @@ pub async fn tasks_open(
             rows.push(TaskRow {
                 id,
                 name: String::from_utf16_lossy(&units),
-                name_key: Some(4),
+                name_key: Some(id_offset(layout.version) + 4),
                 coordinates: None,
             });
         }
@@ -295,6 +326,7 @@ pub async fn tasks_open(
             bytes: Arc::new(bytes),
         });
         Ok(TaskPack {
+            version: layout.version,
             revision,
             rows,
             names_error,
@@ -328,7 +360,7 @@ pub async fn tasks_detail(
         } else {
             let bytes = ide::read(&scope, index)?;
             if expected != revision(&bytes) {
-                return Err("Файл изменён. Откройте его заново.".into());
+                return Err("File has changed. Reopen it.".into());
             }
             let bytes = Arc::new(bytes);
             *CACHE.lock().map_err(err)? = Some(CachedPack {
@@ -339,8 +371,9 @@ pub async fn tasks_detail(
             });
             bytes
         };
-        let (_, record) = kind.layout(&bytes)?.root(&bytes, row)?;
-        kind.parse(&record)
+        let layout = kind.layout(&bytes)?;
+        let (_, record) = layout.root(&bytes, row)?;
+        kind.parse(&record, layout.version)
     })
     .await
     .map_err(err)?
@@ -390,7 +423,7 @@ pub async fn tasks_save(
         let kind = task_kind(&scope, index)?;
         let original = ide::read(&scope, index)?;
         if expected != revision(&original) {
-            return Err("Файл изменён. Откройте его заново.".into());
+            return Err("File has changed. Reopen it.".into());
         }
         let updated = apply_edits(kind, &original, changes)?;
         let result = revision(&updated);
@@ -416,19 +449,19 @@ fn apply_edits(kind: PackKind, original: &[u8], changes: Vec<TaskEdit>) -> Resul
     for mut change in changes {
         let (start, record) = layout.root(&original, change.row)?;
         collect_patches(
-            &kind.parse(&record)?,
+            &kind.parse(&record, layout.version)?,
             &mut change.fields,
             start,
             &record,
             &mut patches,
         )?;
         if !change.fields.is_empty() {
-            return Err("Нет поля задания".into());
+            return Err("No quest field".into());
         }
     }
     patches.sort_unstable_by_key(|patch| (patch.0, patch.1));
     if patches.windows(2).any(|pair| pair[0].1 > pair[1].0) {
-        return Err("Правки пересекаются".into());
+        return Err("Edits overlap".into());
     }
     let mut updated = original.to_vec();
     if patches
@@ -456,7 +489,7 @@ fn apply_edits(kind: PackKind, original: &[u8], changes: Vec<TaskEdit>) -> Resul
         }
         rebuilt.extend_from_slice(&updated[cursor..]);
         if rebuilt.len() > i32::MAX as usize {
-            return Err("Пакет заданий слишком велик".into());
+            return Err("Quest pack is too large".into());
         }
         if kind == PackKind::Dynamic {
             let size = rebuilt.len() as u32;
@@ -487,8 +520,157 @@ fn apply_edits(kind: PackKind, original: &[u8], changes: Vec<TaskEdit>) -> Resul
     if kind == PackKind::Static {
         for row in edited_rows {
             let (_, record) = checked.root(&updated, row)?;
-            kind.parse(&record)?;
+            kind.parse(&record, layout.version)?;
         }
     }
     Ok(updated)
+}
+
+pub(super) fn mcp_read(name: &str, bytes: &[u8], args: &serde_json::Value) -> Result<serde_json::Value> {
+    let kind = kind_from_name(name)?;
+    let layout = kind.layout(bytes)?;
+    if let Some(row) = args["row"].as_u64() {
+        let (_, record) = layout.root(bytes, row as usize)?;
+        return serde_json::to_value(kind.parse(&record, layout.version)?).map_err(err);
+    }
+    Ok(serde_json::json!({"count":layout.offsets.len()}))
+}
+
+pub(super) fn mcp_patch(name: &str, bytes: &[u8], args: &serde_json::Value) -> Result<Vec<u8>> {
+    apply_edits(kind_from_name(name)?, bytes, serde_json::from_value(args["changes"].clone()).map_err(err)?)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v93_round_trip_edits_reward_dialogue_and_child() {
+        fn quest(id: u32, child: Option<Vec<u8>>) -> Vec<u8> {
+            let mut body = vec![0; 906 + 2 * 208 + 2 * 24 + 2 * 28];
+            body[..4].copy_from_slice(&id.to_le_bytes());
+            for unit in body[4..64].chunks_exact_mut(2) {
+                unit.copy_from_slice(&(id as u16).to_le_bytes());
+            }
+            body.extend_from_slice(&[0; 16]);
+            for _ in 0..5 {
+                body.extend_from_slice(&0u32.to_le_bytes());
+                for _ in 0..64 {
+                    body.extend_from_slice(&(id as u16).to_le_bytes());
+                }
+                body.extend_from_slice(&0u32.to_le_bytes());
+            }
+            body.extend_from_slice(&u32::from(child.is_some()).to_le_bytes());
+            if let Some(child) = child {
+                body.extend(child);
+            }
+            body
+        }
+
+        let root = quest(42, Some(quest(43, None)));
+        let second = quest(44, None);
+        let mut original = Vec::new();
+        for word in [MAGIC, 93, 2, 20, (20 + root.len()) as u32] {
+            original.extend_from_slice(&word.to_le_bytes());
+        }
+        original.extend(root);
+        original.extend(&second);
+
+        let layout = PackKind::Static.layout(&original).unwrap();
+        let (_, record) = layout.root(&original, 0).unwrap();
+        let node = PackKind::Static.parse(&record, 93).unwrap();
+        let dialogue = serde_json::to_value(&node.fields).unwrap();
+        let dialogue_key = dialogue.as_array().unwrap().iter()
+            .find(|field| field["section"] == "Accept dialogue").unwrap()["key"].as_u64().unwrap() as usize;
+        let dialogue = serde_json::json!({
+            "id": 0, "title": "Accept", "windows": [{"id": 1, "parent": 0, "text": "Hello", "options": []}]
+        });
+        let updated = apply_edits(PackKind::Static, &original, vec![TaskEdit {
+            row: 0,
+            fields: HashMap::from([
+                (906, "100".into()),
+                (dialogue_key, dialogue.to_string()),
+                (node.children[0].fields[0].key, "Child".into()),
+            ]),
+        }]).unwrap();
+
+        let layout = PackKind::Static.layout(&updated).unwrap();
+        let (_, record) = layout.root(&updated, 0).unwrap();
+        let node = PackKind::Static.parse(&record, 93).unwrap();
+        assert_eq!(node.children[0].name, "Child");
+        assert_eq!(u32_at(&record, 906, false).unwrap(), 100);
+        assert!(serde_json::to_string(&node).unwrap().contains("Hello"));
+        assert_eq!(layout.root(&updated, 1).unwrap().1, second);
+    }
+
+    #[test]
+    fn versioned_schemas_round_trip_quest_fields() {
+        fn quest(version: u32, fixed_size: usize, id: u32, child: Option<Vec<u8>>) -> Vec<u8> {
+            let mut body = vec![0; fixed_size];
+            let start = id_offset(version);
+            body[start..start + 4].copy_from_slice(&id.to_le_bytes());
+            for unit in body[start + 4..start + PREFIX].chunks_exact_mut(2) {
+                unit.copy_from_slice(&(id as u16).to_le_bytes());
+            }
+            body.extend_from_slice(&[0; 16]);
+            for _ in 0..5 {
+                body.extend_from_slice(&0u32.to_le_bytes());
+                for _ in 0..64 {
+                    body.extend_from_slice(&(id as u16).to_le_bytes());
+                }
+                body.extend_from_slice(&0u32.to_le_bytes());
+            }
+            body.extend_from_slice(&u32::from(child.is_some()).to_le_bytes());
+            if let Some(child) = child {
+                body.extend(child);
+            }
+            body
+        }
+
+        for version in SUPPORTED_VERSIONS.iter().copied().filter(|v| !matches!(v, 93 | 125)) {
+            let fixed_size = detail::synthetic_fixed_size(version)
+                .unwrap_or_else(|error| panic!("v{version}: {error}"));
+            let root = quest(version, fixed_size, 42, Some(quest(version, fixed_size, 43, None)));
+            let second = quest(version, fixed_size, 44, None);
+            let mut original = Vec::new();
+            for word in [MAGIC, version, 2, 20, (20 + root.len()) as u32] {
+                original.extend_from_slice(&word.to_le_bytes());
+            }
+            original.extend(root);
+            original.extend(&second);
+            let layout = PackKind::Static.layout(&original).unwrap();
+            assert_eq!(layout.version, version);
+            let (_, record) = layout.root(&original, 0).unwrap();
+            let node = PackKind::Static.parse(&record, version)
+                .unwrap_or_else(|error| panic!("v{version}: {error}"));
+            let fields = serde_json::to_value(&node.fields).unwrap();
+            let lookup = |label: &str| {
+                fields.as_array().unwrap().iter()
+                    .find(|field| field["label"] == label)
+                    .unwrap_or_else(|| panic!("v{version} lacks {label}"))
+            };
+            let key = |label| lookup(label)["key"].as_u64().unwrap() as usize;
+            let dialogue = serde_json::json!({
+                "id": 0, "title": "Accept", "windows": [
+                    {"id": 1, "parent": 0, "text": "Hello", "options": []}
+                ]
+            });
+            let updated = apply_edits(PackKind::Static, &original, vec![TaskEdit {
+                row: 0,
+                fields: HashMap::from([
+                    (key("m_ulTimeLimit"), "60".into()),
+                    (key("m_Award_S.m_ulGoldNum"), "100".into()),
+                    (key("Accept dialogue"), dialogue.to_string()),
+                    (node.children[0].fields[0].key, "Child".into()),
+                ]),
+            }]).unwrap_or_else(|error| panic!("v{version}: {error}"));
+            let layout = PackKind::Static.layout(&updated).unwrap();
+            let (_, record) = layout.root(&updated, 0).unwrap();
+            let node = PackKind::Static.parse(&record, version).unwrap();
+            assert_eq!(node.children[0].name, "Child");
+            assert_eq!(u32_at(&record, key("m_ulTimeLimit"), false).unwrap(), 60);
+            assert_eq!(u32_at(&record, key("m_Award_S.m_ulGoldNum"), false).unwrap(), 100);
+            assert!(serde_json::to_string(&node).unwrap().contains("Hello"));
+            assert_eq!(layout.root(&updated, 1).unwrap().1, second);
+        }
+    }
 }

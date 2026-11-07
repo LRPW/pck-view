@@ -1,5 +1,6 @@
-import {t, useLanguage} from '../../i18n/index';
+import {Box} from "@chakra-ui/react";
 import {useEffect, useState} from 'react';
+import {t, useLanguage} from '../../i18n/index';
 import {ImageViewer} from './ImageViewer';
 
 const formats: Record<string, string> = {
@@ -50,7 +51,7 @@ export function MediaPreview({name, bytes, thumbnail = false}: { name: string; b
                     canvas.width = width;
                     canvas.height = height;
                     const context = canvas.getContext('2d');
-                    if (!context) throw Error(t('Canvas недоступен'));
+                    if (!context) throw Error(t("Canvas is unavailable"));
                     const image = context.createImageData(width, height);
                     image.data.set(pixels);
                     context.putImageData(image, 0, 0);
@@ -79,14 +80,14 @@ export function MediaPreview({name, bytes, thumbnail = false}: { name: string; b
     if (thumbnail) return url && !error
         ? <img className="resource-thumbnail-image" src={url} alt={name} onError={() => setError(true)}/>
         : null;
-    if (!url && !error) return <div className="media-preview"><p>{t("Загрузка текстуры…")}</p></div>;
-    return <div className="media-preview">
-        {error ? <p>{t("Не удалось открыть файл. Формат или кодек не поддерживается, либо файл повреждён.")}</p>
+    if (!url && !error) return <Box className="media-preview"><p>{t("Loading texture…")}</p></Box>;
+    return <Box className="media-preview">
+        {error ? <p>{t("Cannot open file. The format or codec is unsupported, or the file is damaged.")}</p>
             : mime?.startsWith('image/') ? <ImageViewer key={url} src={url} name={name}
                                                         onError={() => setError(true)}/> : mime?.startsWith('audio/') ?
-                <div className="audio-stage">
+                <Box className="audio-stage">
                     <span aria-hidden className="audio-icon">♫</span>
                     <audio key={url} src={url} controls preload="metadata" onError={() => setError(true)}/>
-                </div> : <video key={url} src={url} controls preload="metadata" onError={() => setError(true)}/>}
-    </div>;
+                </Box> : <video key={url} src={url} controls preload="metadata" onError={() => setError(true)}/>}
+    </Box>;
 }

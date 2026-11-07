@@ -1,6 +1,8 @@
+import {t} from "../../i18n";
+import {Box, Field, Input, Textarea} from "@chakra-ui/react";
 import {type ChangeEvent, type SyntheticEvent, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {TaskColorPicker} from './TaskNameColor';
 import {GameText, plainGameText} from './GameText';
+import {TaskColorPicker} from './TaskNameColor';
 import './colored-text.css';
 
 type Input = HTMLInputElement | HTMLTextAreaElement;
@@ -124,19 +126,21 @@ export function TaskColoredTextInput({
             input.current = element;
         }
     };
-    return <div className="task-formatted-input">
-        <div className="task-color-toolbar">
-            <TaskColorPicker label={selected ? `Цвет выделения · ${label}` : 'Выделите текст, чтобы изменить цвет'}
-                             disabled={disabled || !selected} color={model.colors[selection.start]} change={paint}/>
-        </div>
-        <div className={`task-colored-field${multiline ? ' multiline' : ''}`}>
-            <div className="task-color-mirror" ref={mirror} aria-hidden="true">
+    return <Box className="task-formatted-input">
+        <Box className="task-color-toolbar">
+            <TaskColorPicker
+                label={selected ? t("Selection color · {value0}", {value0: label}) : t("Select text to change its color")}
+                disabled={disabled || !selected} color={model.colors[selection.start]} change={paint}/>
+        </Box>
+        <Box className={`task-colored-field${multiline ? ' multiline' : ''}`}>
+            <Box className="task-color-mirror" ref={mirror} aria-hidden="true">
                 {model.plain ? <GameText text={text.replace(/\r\n?/g, '\n')}/> :
                     placeholder && <span className="task-color-placeholder">{placeholder}</span>}
                 {multiline && '\u200b'}
-            </div>
-            {multiline ? <textarea {...props} rows={4}/> : <input {...props}/>}
-        </div>
-        {limit && <small role="status">Лимит текста с кодами цвета · {maxLength} кодовых единиц UTF-16.</small>}
-    </div>;
+            </Box>
+            {multiline ? <Textarea {...props} rows={4}/> : <Field.Root width="auto"><Input {...props} /></Field.Root>}
+        </Box>
+        {limit && <small
+            role="status">{t("Text limit including color codes · ")}{maxLength} {t(" UTF-16 code units.")}</small>}
+    </Box>;
 }

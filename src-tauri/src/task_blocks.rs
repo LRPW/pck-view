@@ -51,7 +51,7 @@ impl Reader<'_> {
             key: start | GROUP_KEY,
             end: self.pos,
             code: (start - header) as u16,
-            label: "Предметы награды".into(),
+            label: "Reward items".into(),
             section: section.into(),
             kind: if compact {
                 Kind::CompactAwardGroups
@@ -69,7 +69,7 @@ fn word(bytes: &mut Vec<u8>, value: u32) {
 fn count(bytes: &mut Vec<u8>, length: usize, compact: bool) -> Result<()> {
     if compact {
         if length > 127 {
-            return Err("В компактном формате допустимо не более 127 записей".into());
+            return Err("The compact format supports at most 127 records".into());
         }
         bytes.push(length as u8);
     } else {
@@ -80,7 +80,7 @@ fn count(bytes: &mut Vec<u8>, length: usize, compact: bool) -> Result<()> {
 pub(super) fn encode_groups(value: &str, compact: bool) -> Result<Vec<u8>> {
     let groups: Vec<Group> = serde_json::from_str(value).map_err(|e| e.to_string())?;
     if groups.len() > 12 {
-        return Err("Допустимо не более 12 групп наград".into());
+        return Err("At most 12 reward groups are allowed".into());
     }
     let mut bytes = Vec::new();
     if compact && !groups.is_empty() {
@@ -91,7 +91,7 @@ pub(super) fn encode_groups(value: &str, compact: bool) -> Result<Vec<u8>> {
         count(&mut bytes, group.items.len(), compact)?;
         for item in group.items {
             if item.id == 0 || item.count == 0 || !(0.0..=1.0).contains(&item.probability) {
-                return Err("Для предмета укажите ID, количество и вероятность от 0 до 1".into());
+                return Err("Specify an item ID, quantity and probability from 0 to 1".into());
             }
             word(&mut bytes, item.id);
             bytes.push(u8::from(item.common));
@@ -183,7 +183,7 @@ impl Reader<'_> {
     fn talk_label(&mut self, compact: bool, code: u16) -> Result<String> {
         let size = if compact { self.count()? } else { 128 };
         if size > 128 || size % 2 != 0 {
-            return Err("Некорректная подпись диалога".into());
+            return Err("Invalid dialogue label".into());
         }
         let start = self.take(size)?;
         Ok(self.text(start, size / 2, code))
@@ -243,7 +243,7 @@ impl Reader<'_> {
 fn label(bytes: &mut Vec<u8>, text: &str, code: u16, compact: bool) -> Result<()> {
     let mut units = text.encode_utf16().collect::<Vec<_>>();
     if units.len() >= 64 || units.contains(&0) {
-        return Err("Подпись диалога должна помещаться в 63 символа UTF-16".into());
+        return Err("Dialogue label must fit in 63 UTF-16 code units".into());
     }
     if compact {
         word(bytes, (units.len() * 2) as u32);
@@ -265,15 +265,15 @@ pub(super) fn encode_talk(value: &str, code: u16, compact: bool) -> Result<Vec<u
     count(&mut bytes, talk.windows.len(), compact)?;
     for window in talk.windows {
         if compact {
-            bytes.push(u8::try_from(window.id).map_err(|_| "ID окна вне диапазона")?);
-            bytes.push(u8::try_from(window.parent).map_err(|_| "ID родителя вне диапазона")?);
+            bytes.push(u8::try_from(window.id).map_err(|_| "Window ID is out of range")?);
+            bytes.push(u8::try_from(window.parent).map_err(|_| "Parent ID is out of range")?);
         } else {
             word(&mut bytes, window.id);
             word(&mut bytes, window.parent);
         }
         let units = window.text.encode_utf16().collect::<Vec<_>>();
         if units.len() > 1_000_000 || units.contains(&0) {
-            return Err("Некорректный текст окна".into());
+            return Err("Invalid window text".into());
         }
         word(&mut bytes, (units.len() + 1) as u32);
         for unit in units.into_iter().chain([0]) {

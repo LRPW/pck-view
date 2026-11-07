@@ -3,6 +3,13 @@
 mod app;
 
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--mcp")) {
+        if let Err(error) = app::run_mcp() {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     #[cfg(windows)]
     {
         #[link(name = "shell32")]

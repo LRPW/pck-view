@@ -37,24 +37,24 @@ mod tests {
     }
     #[test]
     fn association_accepts_unicode_spaces_and_uppercase_extension() {
-        assert_eq!(parse(&["pckview.exe", r"D:\游戏 文件\Models.PCK"]),
+        assert_eq!(parse(&["pwforge.exe", r"D:\游戏 文件\Models.PCK"]),
             Some((r"D:\游戏 文件\Models.PCK".into(), String::new())));
     }
     #[test]
     fn explicit_open_no_longer_requires_entry() {
-        assert_eq!(parse(&["pckview.exe", "--open-archive", "models.pck"]),
+        assert_eq!(parse(&["pwforge.exe", "--open-archive", "models.pck"]),
             Some(("models.pck".into(), String::new())));
     }
     #[test]
     fn resource_navigation_preserves_explicit_target_and_entry() {
-        assert_eq!(parse(&["pckview.exe", "other.pck", "--select-entry", r"models\怪物\model.ecm", "--open-archive", "models.pck"]),
+        assert_eq!(parse(&["pwforge.exe", "other.pck", "--select-entry", r"models\怪物\model.ecm", "--open-archive", "models.pck"]),
             Some(("models.pck".into(), r"models\怪物\model.ecm".into())));
     }
     #[test]
     fn no_archive_or_missing_explicit_path_has_no_startup_target() {
-        assert_eq!(parse(&["pckview.exe"]), None);
-        assert_eq!(parse(&["pckview.exe", "--open-archive"]), None);
-        assert_eq!(parse(&["pckview.exe", "--open-archive", "--select-entry", "x"]), None);
-        assert_eq!(parse(&["pckview.exe", "--select-entry", "resource.pck"]), None);
+        assert_eq!(parse(&["pwforge.exe"]), None);
+        assert_eq!(parse(&["pwforge.exe", "--open-archive"]), None);
+        assert_eq!(parse(&["pwforge.exe", "--open-archive", "--select-entry", "x"]), None);
+        assert_eq!(parse(&["pwforge.exe", "--select-entry", "resource.pck"]), None);
     }
 }

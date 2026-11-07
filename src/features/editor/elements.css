@@ -3,8 +3,8 @@
     inset: 0;
     z-index: 50;
     flex-direction: column;
-    background: #0b1018;
-    color: #dae3ef;
+    background: var(--chakra-colors-bg);
+    color: var(--chakra-colors-fg);
     font: 14px system-ui
 }
 
@@ -13,49 +13,18 @@
     gap: 12px;
     align-items: center;
     padding: 18px;
-    border-bottom: 1px solid #253044
+    border-bottom: 1px solid var(--chakra-colors-border)
 }
 
 .elements-editor header strong {
     font-size: 22px;
     margin-right: auto;
-    color: #63e2c5
+    color: var(--chakra-colors-teal-fg)
 }
 
 .elements-editor header span {
     font-size: 14px;
-    color: #97a7bf
-}
-
-.elements-editor button {
-    padding: 8px 12px;
-    background: #182436;
-    border: 1px solid #2b3d55;
-    border-radius: 5px;
-    cursor: pointer;
-    text-align: left
-}
-
-.elements-editor button:hover {
-    background: #263d53
-}
-
-.elements-editor button:disabled {
-    opacity: .4;
-    cursor: default
-}
-
-.elements-editor input, .elements-editor textarea {
-    background: #101b29;
-    color: inherit;
-    border: 1px solid #34465e;
-    border-radius: 4px;
-    padding: 8px;
-    min-width: 0
-}
-
-.elements-editor input:focus, .elements-editor textarea:focus {
-    outline: 1px solid #63e2c5
+    color: var(--chakra-colors-fg-muted)
 }
 
 .elements-editor main {
@@ -70,7 +39,7 @@
     flex-direction: column;
     gap: 10px;
     padding: 12px;
-    border-right: 1px solid #253044
+    border-right: 1px solid var(--chakra-colors-border)
 }
 
 .elements-editor nav {
@@ -89,12 +58,12 @@
 }
 
 .elements-editor small {
-    color: #8eabc0
+    color: var(--chakra-colors-fg-muted)
 }
 
 .elements-editor .selected {
-    background: #17473f;
-    border-color: #63e2c5
+    background: var(--chakra-colors-teal-subtle);
+    border-color: var(--chakra-colors-teal-fg)
 }
 
 .elements-records {
@@ -103,7 +72,7 @@
     flex-direction: column;
     padding: 12px;
     gap: 10px;
-    border-right: 1px solid #253044
+    border-right: 1px solid var(--chakra-colors-border)
 }
 
 .elements-list {
@@ -119,7 +88,7 @@
 }
 
 .elements-list code {
-    color: #63e2c5;
+    color: var(--chakra-colors-teal-fg);
     min-width: 50px
 }
 
@@ -163,7 +132,7 @@
     grid-template-columns:minmax(0, min(var(--elements-field-width), 60%)) 7px minmax(0, 1fr);
     gap: 5px;
     padding: 8px;
-    border-bottom: 1px solid #1d2a3b;
+    border-bottom: 1px solid var(--chakra-colors-bg-panel);
     align-items: start
 }
 
@@ -184,24 +153,24 @@
 }
 
 .elements-fields .modified {
-    background: #15332e
+    background: var(--chakra-colors-teal-subtle)
 }
 
 .elements-path, .elements-status {
     padding: 10px 18px;
-    background: #111b29;
+    background: var(--chakra-colors-bg);
     font-size: 12px;
     overflow-wrap: anywhere
 }
 
 .elements-path span {
     float: right;
-    color: #8eabc0
+    color: var(--chakra-colors-fg-muted)
 }
 
 .elements-error {
-    background: #52282e;
-    color: #ffccd0;
+    background: var(--chakra-colors-red-subtle);
+    color: var(--chakra-colors-red-fg);
     padding: 12px;
     white-space: pre-wrap
 }
@@ -209,12 +178,12 @@
 .elements-empty {
     margin: auto;
     text-align: center;
-    color: #a8b8ca
+    color: var(--chakra-colors-fg-muted)
 }
 
 .elements-empty p, .elements-hint {
     font-size: 12px;
-    color: #8599b1
+    color: var(--chakra-colors-fg-muted)
 }
 
 .elements-editor main > aside, .elements-editor main > .elements-records {
@@ -258,13 +227,13 @@
 }
 
 .elements-list button {
-    border-color: #2b3d55;
+    border-color: var(--chakra-colors-border);
 }
 
 .elements-list-columns {
     position: sticky;
     top: 0;
-    background: #0b1018;
+    background: var(--chakra-colors-bg);
 }
 
 .elements-list code {
@@ -316,13 +285,13 @@
     margin: auto;
     padding: 0;
     color: inherit;
-    background: #101924;
-    border: 1px solid #34465e;
+    background: var(--chakra-colors-bg);
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 8px;
 }
 
 .resource-picker::backdrop {
-    background: rgb(0 0 0 / 55%);
+    background: var(--chakra-colors-black-alpha-600);
 }
 
 .resource-picker-body {
@@ -377,8 +346,8 @@
 }
 
 .shop-slots .shop-slot-tab[data-selected] {
-    background: #17473f;
-    border-color: #63e2c5;
+    background: var(--chakra-colors-teal-subtle);
+    border-color: var(--chakra-colors-teal-fg);
 }
 
 .shop-slot-panel {
@@ -404,7 +373,7 @@
     width: 100%;
 }
 
-.shop-day-mask label {
+.shop-day-mask [data-scope="field"][data-part="root"] {
     display: inline-flex;
     align-items: center;
     gap: 2px;
@@ -466,7 +435,7 @@
 .shop-description-fallback {
     min-width: 0;
     padding: 6px;
-    border: 1px solid #34465e;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 4px;
 }
 

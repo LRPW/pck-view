@@ -1,20 +1,27 @@
-import {useEffect, useMemo, useState} from 'react';
+import {matchesShortcut} from '../../app/shortcuts';
+import {message, sourceText, t} from "../../i18n";
+import {Alert, Box, Button, Field, Input, Select, Tabs} from "@chakra-ui/react";
 import {invoke} from '@tauri-apps/api/core';
-import {Tabs} from '@chakra-ui/react';
+import type {ComponentProps} from "react";
+import {useEffect, useMemo, useState} from 'react';
+import {notifications} from '../../app/notifications';
+import {AccordionItem, AccordionItemContent, AccordionItemTrigger, AccordionRoot} from "../../components/ui/accordion";
+import {SelectContent, SelectItem, SelectRoot, SelectTrigger, SelectValueText} from "../../components/ui/select";
 import {ColumnDivider, resizeWidth} from './ColumnDivider';
-import {useColumnWidth} from './useColumnWidth';
-import {RecordLink} from './RecordLink';
+import {EditorProgress, EditorSkeleton} from './EditorLoading';
 import {EditorSwitch} from './EditorSwitch';
 import {GameText, plainGameText} from './GameText';
+import {RecordLink} from './RecordLink';
+import {selectCollection} from './select-collection';
 import {TaskAwardGroups, TaskDialogue} from './TaskBlocks';
-import {TaskNameColor} from './TaskNameColor';
 import {TaskColoredTextInput} from './TaskColoredTextInput';
-import {EditorProgress, EditorSkeleton} from './EditorLoading';
-import {notifications} from '../../app/notifications';
+import {TaskNameColor} from './TaskNameColor';
 import './tasks.css';
+import {useColumnWidth} from './useColumnWidth';
 
 type TaskRow = { id: number; name: string; name_key: number };
 type TaskPack = {
+    version: number;
     revision: string;
     rows: TaskRow[];
     npc_names?: Record<number, string>;
@@ -36,17 +43,17 @@ function rowName(row: TaskRow, fields?: FieldEdits) {
 }
 
 const taskChoices: Record<string, { start: number; names: string[] }> = {
-    'Тип задания': {
-        start: 100, names: ['Ежедневное', 'Самосовершенствование', 'Сюжетное', 'Побочное',
-            'Событие', 'Список семи убийств', 'Гильдейское', 'Деятельность', 'Легенда', 'Викторина']
+    "Quest type": {
+        start: 100, names: ["Daily", "Cultivation", "Story", "Side quest",
+            "Event", "Seven Kill List", "Faction", "Activity", "Legend", "Quiz"]
     },
-    'Пол': {start: 0, names: ['Любой', 'Мужской', 'Женский']},
-    'Способ сдачи': {start: 0, names: ['Автоматически', 'Через NPC', 'С подтверждением']},
-    'Способ выполнения': {
-        start: 0, names: ['Без условия', 'Убить монстров', 'Собрать предметы', 'Поговорить с NPC',
-            'Достичь места', 'Подождать', 'Ответить на вопрос', 'Мини-игра', 'Защитить NPC', 'Доставить NPC',
-            'Проверить глобальную переменную', 'Покинуть место', 'Найти зону сокровищ', 'Убить игроков',
-            'Превратиться', 'Достичь уровня', 'Клиентская проверка', 'Принудительная навигация', 'Проверить состояние']
+    "Gender": {start: 0, names: ["Any", "Male", "Female"]},
+    "Turn-in method": {start: 0, names: ["Automatic", "Through an NPC", "With confirmation"]},
+    "Completion method": {
+        start: 0, names: ["No condition", "Kill monsters", "Collect items", "Talk to an NPC",
+            "Reach a location", "Wait", "Answer a question", "Mini-game", "Protect an NPC", "Escort an NPC",
+            "Check a global variable", "Leave a location", "Find a treasure area", "Kill players",
+            "Transform", "Reach a level", "Client check", "Forced navigation", "Check a state"]
     },
 };
 
@@ -54,9 +61,9 @@ function TaskBranch({node, edits, selected, choose}: {
     node: TaskNode; edits: FieldEdits; selected: TaskNode; choose: (node: TaskNode) => void;
 }) {
     return <li>
-        <button type="button" aria-pressed={selected === node} onClick={() => choose(node)}>
+        <Button type="button" aria-pressed={selected === node} onClick={() => choose(node)}>
             <code>{node.id}</code> <GameText text={edits[node.fields[0].key] ?? node.name}/>
-        </button>
+        </Button>
         {!!node.children.length && <ul>{node.children.map(child =>
             <TaskBranch key={child.fields[0].key} node={child} edits={edits} selected={selected}
                         choose={choose}/>)}</ul>}
@@ -66,41 +73,49 @@ function TaskBranch({node, edits, selected, choose}: {
 function TaskFieldInput({field, value, disabled, change}: {
     field: TaskField; value: string; disabled: boolean; change: (value: string) => void;
 }) {
-    const choices = taskChoices[field.label];
-    if (choices) return <select aria-label={field.label} value={value} disabled={disabled}
-                                onChange={event => change(event.target.value)}>
-        {!choices.names.some((_, i) => String(i + choices.start) === value) && <option value={value}>{value}</option>}
-        {choices.names.map((name, i) => <option key={i}
-                                                value={i + choices.start}>{i + choices.start} · {name}</option>)}
-    </select>;
+    const choices = taskChoices[sourceText(field.label)];
+    if (choices) return <SelectRoot size="sm" lazyMount unmountOnExit minW="140px"
+                                    collection={selectCollection(<>{!choices.names.some((_, i) => String(i + choices.start) === value) &&
+                                        <option value={value}>{value}</option>}{choices.names.map((name, i) => <option
+                                        key={i}
+                                        value={i + choices.start}>{i + choices.start} · {name}</option>)}</>)}
+                                    value={[String(value)]} onValueChange={async ({value: [value]}) => change(value)}
+                                    aria-label={field.label}
+                                    disabled={disabled}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+        <SelectItem key={select.collection.getItemValue(item)}
+                    item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot>;
     if (field.kind === 'bool') return <EditorSwitch label={field.label} checked={value === '1'}
                                                     disabled={disabled}
                                                     change={checked => change(checked ? '1' : '0')}/>;
     const multiline = field.kind === 'text' || field.kind === 'dialogue';
-    if (multiline || field.section.startsWith('Диалог')) return <TaskColoredTextInput label={field.label}
-                                                                                      text={value} change={change}
-                                                                                      disabled={disabled}
-                                                                                      multiline={multiline}/>;
+    if (multiline || sourceText(field.section).startsWith("Dialogue")) return <TaskColoredTextInput label={field.label}
+                                                                                                    text={value}
+                                                                                                    change={change}
+                                                                                                    disabled={disabled}
+                                                                                                    multiline={multiline}/>;
     if (field.kind === 'fixed_text' || field.kind === 'name' || field.kind === 'talk_label') {
-        return <div className="task-formatted-input">
-            <div className="task-name-input">
-                {field.label === 'Название' && <TaskNameColor text={value} disabled={disabled} change={change}/>}
-                <input aria-label={field.label} value={value} disabled={disabled}
-                       maxLength={29} onChange={event => change(event.target.value)}/>
-            </div>
+        return <Box className="task-formatted-input">
+            <Box className="task-name-input">
+                {sourceText(field.label) === "Name" &&
+                    <TaskNameColor text={value} disabled={disabled} change={change}/>}
+                <Field.Root width="auto"><Input aria-label={field.label} value={value} disabled={disabled}
+                                                maxLength={29}
+                                                onChange={event => change(event.target.value)}/></Field.Root>
+            </Box>
             {plainGameText(value) !== value &&
-                <div className="task-text-preview" aria-label={`Превью · ${field.label}`}>
+                <Box className="task-text-preview" aria-label={t("Preview · {value0}", {value0: field.label})}>
                     <GameText text={value}/>
-                </div>}
-        </div>;
+                </Box>}
+        </Box>;
     }
-    return <input aria-label={field.label} value={value} disabled={disabled}
-                  inputMode={field.kind === 'float' ? 'decimal' : 'numeric'}
-                  onChange={event => {
-                      const next = event.target.value;
-                      const signed = field.kind === 'int' || field.kind === 'short';
-                      if (field.kind === 'float' || (signed ? /^-?\d*$/.test(next) : /^\d*$/.test(next))) change(next);
-                  }}/>;
+    const handleInputChange: ComponentProps<typeof Input>["onChange"] = event => {
+        const next = event.target.value;
+        const signed = field.kind === 'int' || field.kind === 'short';
+        if (field.kind === 'float' || (signed ? /^-?\d*$/.test(next) : /^\d*$/.test(next))) change(next);
+    };
+    return <Field.Root width="auto"><Input aria-label={field.label} value={value} disabled={disabled}
+                                           inputMode={field.kind === 'float' ? 'decimal' : 'numeric'}
+                                           onChange={handleInputChange}/></Field.Root>;
 }
 
 export function TasksEditor({id, index, active, onDirty, onSaved, openNpc, openItem}: {
@@ -196,7 +211,7 @@ export function TasksEditor({id, index, active, onDirty, onSaved, openNpc, openI
             setEdits({});
             onSaved();
         } catch (reason) {
-            notifications.create({type: 'error', title: 'Не удалось сохранить задания', description: String(reason)});
+            notifications.create({type: 'error', title: t("Failed to save quests"), description: String(reason)});
         } finally {
             setBusy(false);
         }
@@ -205,7 +220,7 @@ export function TasksEditor({id, index, active, onDirty, onSaved, openNpc, openI
     useEffect(() => {
         if (!active) return;
         const key = (event: KeyboardEvent) => {
-            if ((event.ctrlKey || event.metaKey) && event.code === 'KeyS') {
+            if (matchesShortcut(event, 'save')) {
                 event.preventDefault();
                 void save();
             }
@@ -218,55 +233,62 @@ export function TasksEditor({id, index, active, onDirty, onSaved, openNpc, openI
     const sections = [...new Set(node?.fields.map(field => field.section))];
     return <section className="tasks-editor">
         <header>
-            <button disabled={busy || !changed} onClick={() => void save()}>Сохранить{changed ? ' *' : ''}</button>
-            {(busy || reading) && <EditorProgress label={reading ? 'Чтение задания' : 'Обработка пакета заданий'}/>}
+            <Button disabled={busy || !changed} onClick={() => void save()}>{t("Save")}{changed ? ' *' : ''}</Button>
+            {pack && <span>v{pack.version}</span>}
+            {(busy || reading) && <EditorProgress label={reading ? t("Reading quest") : t("Processing quest pack")}/>}
         </header>
-        {error && <div className="ide-error" role="alert">{error}</div>}
-        <div className="tasks-workspace">
+        {error && <Alert.Root status="error" size="sm"
+                              role="alert"><Alert.Indicator/><Alert.Content>{message(error)}</Alert.Content></Alert.Root>}
+        <Box className="tasks-workspace">
             <aside style={{width}}>
-                <input aria-label="Поиск задания" placeholder="ID или название…" value={query}
-                       onChange={event => {
-                           setQuery(event.target.value);
-                           setPage(0);
-                       }}/>
-                <nav aria-label="Задания">
+                <Field.Root width="auto"><Input aria-label={t("Find quest")} placeholder={t("ID or name…")}
+                                                value={query}
+                                                onChange={event => {
+                                                    setQuery(event.target.value);
+                                                    setPage(0);
+                                                }}/></Field.Root>
+                <nav aria-label={t("Quests")}>
                     {!pack && busy && <EditorSkeleton/>}
                     {matches.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map(i => {
                         const row = pack!.rows[i];
-                        return <button key={i} aria-pressed={selected === i} disabled={busy} onClick={() => {
+                        const handleButtonClick: ComponentProps<typeof Button>["onClick"] = () => {
                             if (i !== selected) {
                                 setNode(undefined);
                                 setRoot(undefined);
                                 setError('');
                                 setSelected(i);
                             }
-                        }}>
+                        };
+                        return <Button key={i} aria-pressed={selected === i} disabled={busy}
+                                       onClick={handleButtonClick}>
                             <code>{row.id}</code><span><GameText text={rowName(row, edits[i])}/></span>
-                        </button>;
+                        </Button>;
                     })}
                 </nav>
                 <footer>
-                    <button aria-label="Предыдущая страница" disabled={currentPage === 0}
+                    <Button aria-label={t("Previous page")} disabled={currentPage === 0}
                             onClick={() => setPage(currentPage - 1)}>←
-                    </button>
+                    </Button>
                     <span>{currentPage + 1} / {pages} · {matches.length.toLocaleString()}</span>
-                    <button aria-label="Следующая страница" disabled={currentPage + 1 >= pages}
+                    <Button aria-label={t("Next page")} disabled={currentPage + 1 >= pages}
                             onClick={() => setPage(currentPage + 1)}>→
-                    </button>
+                    </Button>
                 </footer>
             </aside>
-            <ColumnDivider label="Ширина списка заданий"
+            <ColumnDivider label={t("Quest list width")}
                            onDelta={delta => setWidth(value => resizeWidth(value, delta, 140, 560))}/>
             {reading && <article><EditorSkeleton/></article>}
             {task && node && root && <article>
                 <strong>#{node.id} · <GameText text={fields[node.fields[0].key] ?? node.name}/></strong>
-                {!!root.children.length && <details className="task-tree" open>
-                    <summary>Дерево задания</summary>
+                {!!root.children.length && <AccordionRoot collapsible defaultValue={true ? ["content"] : []}
+                                                          className="task-tree"><AccordionItem
+                    value="content"><AccordionItemTrigger>{t("Quest tree")}</AccordionItemTrigger><AccordionItemContent>
                     <ul><TaskBranch node={root} edits={fields} selected={node} choose={setNode}/></ul>
-                </details>}
+                </AccordionItemContent></AccordionItem></AccordionRoot>}
                 <Tabs.Root key={node.fields[0].key} defaultValue={sections[0]} size="sm" colorPalette="teal">
-                    <Tabs.List className="task-sections" aria-label="Параметры задания">
-                        {sections.map(section => <Tabs.Trigger key={section} value={section}>{section}</Tabs.Trigger>)}
+                    <Tabs.List className="task-sections" aria-label={t("Quest properties")}>
+                        {sections.map(section => <Tabs.Trigger key={section}
+                                                               value={section}>{message(section)}</Tabs.Trigger>)}
                     </Tabs.List>
                     {sections.map(section => <Tabs.Content key={section} value={section}>
                         {node.fields.filter(field => field.section === section).map(field => {
@@ -279,35 +301,34 @@ export function TasksEditor({id, index, active, onDirty, onSaved, openNpc, openI
                                     ? <TaskDialogue value={value} change={next => update(field, next)} disabled={busy}
                                                     compact={compact}/>
                                     : undefined;
-                            if (structured) return <div key={field.key} className="task-structured-field">
-                                {fields[field.key] !== undefined && <button type="button" disabled={busy}
-                                                                            onClick={() => update(field, field.value)}>Отменить
-                                    правки блока</button>}
+                            if (structured) return <Box key={field.key} className="task-structured-field">
+                                {fields[field.key] !== undefined && <Button type="button" disabled={busy}
+                                                                            onClick={() => update(field, field.value)}>{t("Revert block changes")}</Button>}
                                 {structured}
-                            </div>;
-                            const npc = field.label === 'ID NPC выдачи' || field.label === 'ID NPC награды';
-                            const item = /ID (?:выпадающего )?предмета$/.test(field.label);
+                            </Box>;
+                            const npc = sourceText(field.label) === "Quest giver NPC ID" || sourceText(field.label) === "Reward NPC ID";
+                            const item = /item ID$/i.test(sourceText(field.label));
                             const name = npc ? pack?.npc_names?.[Number(value)] : item ? pack?.item_names?.[Number(value)] : undefined;
                             const input = <TaskFieldInput field={field} value={value} disabled={busy}
                                                           change={next => update(field, next)}/>;
-                            return <div className="task-field" key={field.key}>
-                                <span>{field.label}</span>
-                                {npc || item ? <div className="task-npc-reference">
+                            return <Box className="task-field" key={field.key}>
+                                <span>{t(field.label)}</span>
+                                {npc || item ? <Box className="task-npc-reference">
                                     <RecordLink value={value} label={field.label} busy={busy}
                                                 open={npc ? openNpc : openItem} npc={npc}/>
                                     {input}
                                     {name && <span title={plainGameText(name)}><GameText text={name}/></span>}
-                                </div> : input}
-                                <div className="task-record-actions">
-                                    {fields[field.key] !== undefined && <button type="button" disabled={busy}
-                                                                                aria-label={`Отменить правку · ${field.label}`}
-                                                                                onClick={() => update(field, field.value)}>↶</button>}
-                                </div>
-                            </div>;
+                                </Box> : input}
+                                <Box className="task-record-actions">
+                                    {fields[field.key] !== undefined && <Button type="button" disabled={busy}
+                                                                                aria-label={t("Revert field · {value0}", {value0: field.label})}
+                                                                                onClick={() => update(field, field.value)}>↶</Button>}
+                                </Box>
+                            </Box>;
                         })}
                     </Tabs.Content>)}
                 </Tabs.Root>
             </article>}
-        </div>
+        </Box>
     </section>;
 }

@@ -1,5 +1,7 @@
-import {useEffect, useState} from 'react';
+import {message, t} from "../../i18n";
+import {Alert, Box, Button} from "@chakra-ui/react";
 import {invoke} from '@tauri-apps/api/core';
+import {useEffect, useState} from 'react';
 import {MediaPreview, mediaType} from './MediaPreview';
 
 export function ResourceWindow() {
@@ -20,15 +22,17 @@ export function ResourceWindow() {
         }
         text = new TextDecoder(encoding).decode(data);
     }
-    return <div className="resource-window">
+    return <Box className="resource-window">
         <header><strong>surfaces.pck / {name}</strong>
-            <div>
-                <button onClick={() => setHex(false)}>Текст</button>
-                <button onClick={() => setHex(true)}>HEX</button>
-            </div>
+            <Box>
+                <Button onClick={() => setHex(false)}>{t("Text")}</Button>
+                <Button onClick={() => setHex(true)}>HEX</Button>
+            </Box>
         </header>
-        {error ? <p role="alert">{error}</p> : !bytes ? <p>Загрузка ресурса…</p> : mediaType(name) && !hex ?
-            <MediaPreview name={name} bytes={bytes}/> :
-            <pre>{hex ? bytes.slice(0, 65536).map((b, i) => (i % 16 === 0 ? '\n' + i.toString(16).padStart(8, '0') + '  ' : '') + b.toString(16).padStart(2, '0') + ' ').join('') : text}</pre>}
-    </div>;
+        {error ? <Alert.Root status="error" size="sm"
+                             role="alert"><Alert.Indicator/><Alert.Content>{message(error)}</Alert.Content></Alert.Root> : !bytes ?
+            <p>{t("Loading resource…")}</p> : mediaType(name) && !hex ?
+                <MediaPreview name={name} bytes={bytes}/> :
+                <pre>{hex ? bytes.slice(0, 65536).map((b, i) => (i % 16 === 0 ? '\n' + i.toString(16).padStart(8, '0') + '  ' : '') + b.toString(16).padStart(2, '0') + ' ').join('') : text}</pre>}
+    </Box>;
 }

@@ -1,6 +1,13 @@
 fn main() {
     #[cfg(windows)]
     stage_native_runtime();
+    let bundle = "../dist/mcp-preview.js";
+    println!("cargo:rerun-if-changed={bundle}");
+    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    std::fs::write(output.join("mcp-preview.js"), std::fs::read(bundle).unwrap_or_default()).unwrap();
+    let domain = "../dist/mcp-domain.cjs";
+    println!("cargo:rerun-if-changed={domain}");
+    std::fs::write(output.join("mcp-domain.cjs"), std::fs::read(domain).unwrap_or_default()).unwrap();
     tauri_build::build();
 }
 

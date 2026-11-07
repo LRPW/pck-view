@@ -8,20 +8,12 @@ html, body, #root {
     box-sizing: border-box
 }
 
-select {
-    background: #192331;
-    color: #dae3ef;
-    padding: 8px;
-    border: 1px solid #344359;
-    border-radius: 6px
-}
-
 .entry {
     display: block;
     text-align: left;
     width: 100%;
     padding: 12px;
-    border-bottom: 1px solid #1b2636;
+    border-bottom: 1px solid var(--chakra-colors-border);
     cursor: pointer
 }
 
@@ -32,20 +24,20 @@ select {
 }
 
 .entry small {
-    color: #8393aa
+    color: var(--chakra-colors-fg-muted)
 }
 
 .entry:hover {
-    background: #172333
+    background: var(--chakra-colors-bg-panel)
 }
 
 .entry.active {
-    background: #15352f;
-    border-left: 3px solid #63e2c5
+    background: var(--chakra-colors-teal-subtle);
+    border-left: 3px solid var(--chakra-colors-teal-fg)
 }
 
 textarea {
-    background: #101925 !important
+    background: var(--chakra-colors-bg) !important
 }
 
 button:disabled {
@@ -86,23 +78,23 @@ button:disabled {
     width: 100%;
     height: 6px;
     margin-top: 8px;
-    accent-color: #63e2c5;
+    accent-color: var(--chakra-colors-teal-fg);
     border: 0;
     border-radius: 3px;
     overflow: hidden
 }
 
 .operation-progress::-webkit-progress-bar {
-    background: #253044
+    background: var(--chakra-colors-border)
 }
 
 .operation-progress::-webkit-progress-value {
-    background: #63e2c5;
+    background: var(--chakra-colors-teal-fg);
     transition: width .1s linear
 }
 
 .operation-progress:indeterminate {
-    background: linear-gradient(90deg, #253044 0%, #63e2c5 50%, #253044 100%);
+    background: linear-gradient(90deg, var(--chakra-colors-border) 0%, var(--chakra-colors-teal-fg) 50%, var(--chakra-colors-border) 100%);
     background-size: 200% 100%;
     animation: progress-slide 1.3s linear infinite
 }
@@ -142,20 +134,20 @@ button:disabled {
     cursor: pointer;
     white-space: nowrap;
     border-radius: 4px;
-    color: #dae3ef
+    color: var(--chakra-colors-fg)
 }
 
 .tree-row:hover {
-    background: #172333
+    background: var(--chakra-colors-bg-panel)
 }
 
 .tree-row[data-selected] {
-    background: #15352f;
-    color: #82edd4
+    background: var(--chakra-colors-teal-subtle);
+    color: var(--chakra-colors-teal-fg)
 }
 
 .tree-row[data-focus] {
-    outline: 1px solid #63e2c5;
+    outline: 1px solid var(--chakra-colors-teal-fg);
     outline-offset: -1px
 }
 
@@ -172,11 +164,11 @@ button:disabled {
 }
 
 .search-result:hover {
-    background: #172333
+    background: var(--chakra-colors-bg-panel)
 }
 
 .search-result.active {
-    background: #15352f
+    background: var(--chakra-colors-teal-subtle)
 }
 
 .find-panel {
@@ -186,8 +178,8 @@ button:disabled {
     display: flex;
     flex-direction: column;
     padding: 10px 20px;
-    border-top: 1px solid #344359;
-    background: #111925;
+    border-top: 1px solid var(--chakra-colors-border);
+    background: var(--chakra-colors-bg);
     gap: 4px
 }
 
@@ -195,7 +187,7 @@ button:disabled {
     flex: 1;
     min-height: 0;
     overflow: auto;
-    border: 1px solid #253044
+    border: 1px solid var(--chakra-colors-border)
 }
 
 .find-file {
@@ -204,8 +196,8 @@ button:disabled {
     padding: 5px 10px;
     font-size: 12px;
     font-weight: 600;
-    background: #1b2737;
-    color: #91abc9
+    background: var(--chakra-colors-bg-panel);
+    color: var(--chakra-colors-fg-muted)
 }
 
 .find-hit {
@@ -221,15 +213,15 @@ button:disabled {
 }
 
 .find-hit:hover {
-    background: #202e40
+    background: var(--chakra-colors-bg-panel)
 }
 
 .find-hit.active {
-    background: #16483e
+    background: var(--chakra-colors-teal-subtle)
 }
 
 .find-location {
-    color: #8393aa;
+    color: var(--chakra-colors-fg-muted);
     min-width: 70px
 }
 
@@ -239,14 +231,14 @@ button:disabled {
 }
 
 .find-hit mark {
-    background: #735c24;
-    color: #ffe09a;
+    background: var(--chakra-colors-orange-subtle);
+    color: var(--chakra-colors-orange-fg);
     border-radius: 2px
 }
 
 .file-editor::selection {
-    background: #66531e;
-    color: #fff
+    background: var(--chakra-colors-orange-subtle);
+    color: var(--chakra-colors-white)
 }
 
 .floating-search {
@@ -262,10 +254,10 @@ button:disabled {
     max-height: 95vh;
     resize: both;
     overflow: hidden;
-    border: 1px solid #49617b;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 8px;
-    box-shadow: 0 16px 60px #000a;
-    background: #111925
+    box-shadow: 0 16px 60px var(--chakra-colors-black-alpha-700);
+    background: var(--chakra-colors-bg)
 }
 
 .floating-search-title {
@@ -273,7 +265,7 @@ button:disabled {
     align-items: center;
     gap: 16px;
     padding: 10px 14px;
-    background: #223044;
+    background: var(--chakra-colors-border);
     cursor: move;
     touch-action: none;
     user-select: none;
@@ -282,7 +274,7 @@ button:disabled {
 
 .floating-search-title span {
     font-size: 11px;
-    color: #a1b1c5;
+    color: var(--chakra-colors-fg-muted);
     flex: 1
 }
 
@@ -306,8 +298,8 @@ button:disabled {
 .native-search {
     height: 100vh;
     display: flex;
-    background: #111925;
-    color: #dae3ef
+    background: var(--chakra-colors-bg);
+    color: var(--chakra-colors-fg)
 }
 
 .native-search .find-panel {
@@ -329,10 +321,10 @@ button:disabled {
     flex: 1;
     min-height: 0;
     min-width: 0;
-    border: 1px solid #253044;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 6px;
     overflow: hidden;
-    background: #101925
+    background: var(--chakra-colors-bg)
 }
 
 .media-toolbar {
@@ -341,13 +333,13 @@ button:disabled {
     gap: 20px;
     padding: 8px 12px;
     font-size: 12px;
-    color: #9fb0c6;
+    color: var(--chakra-colors-fg-muted);
     flex-shrink: 0
 }
 
 .media-toolbar button {
     padding: 4px 10px;
-    background: #253044;
+    background: var(--chakra-colors-border);
     border-radius: 4px;
     cursor: pointer
 }
@@ -359,7 +351,7 @@ button:disabled {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: repeating-conic-gradient(#202936 0% 25%, #18212d 0% 50%) 0 0/20px 20px
+    background: repeating-conic-gradient(var(--chakra-colors-bg-panel) 0% 25%, var(--chakra-colors-bg-panel) 0% 50%) 0 0/20px 20px
 }
 
 .image-stage img {
@@ -393,7 +385,7 @@ button:disabled {
 
 .audio-icon {
     font-size: 64px;
-    color: #63e2c5
+    color: var(--chakra-colors-teal-fg)
 }
 
 .media-preview video {
@@ -405,7 +397,7 @@ button:disabled {
 
 .media-preview > p {
     padding: 20px;
-    color: #f1b7a8
+    color: var(--chakra-colors-red-fg)
 }
 
 .image-stage.zoom-stage {
@@ -445,21 +437,21 @@ button:disabled {
 
 .ui-editor-toolbar span {
     font-size: 12px;
-    color: #a0b0c2
+    color: var(--chakra-colors-fg-muted)
 }
 
 .ui-editor-workspace {
     display: flex;
     flex: 1;
     min-height: 0;
-    border: 1px solid #344359
+    border: 1px solid var(--chakra-colors-border)
 }
 
 .ui-editor-tree {
     width: 190px;
     overflow: auto;
     flex-shrink: 0;
-    background: #111925
+    background: var(--chakra-colors-bg)
 }
 
 .ui-editor-tree button {
@@ -472,7 +464,7 @@ button:disabled {
 }
 
 .ui-editor-tree button[data-selected] {
-    background: #16483e
+    background: var(--chakra-colors-teal-subtle)
 }
 
 .ui-editor-canvas {
@@ -486,13 +478,13 @@ button:disabled {
     width: 240px;
     flex-shrink: 0;
     overflow: auto;
-    background: #111925;
+    background: var(--chakra-colors-bg);
     padding: 12px;
     font-size: 12px
 }
 
 .ui-editor-properties p {
-    color: #a0b0c2;
+    color: var(--chakra-colors-fg-muted);
     margin: 8px 0
 }
 
@@ -504,11 +496,11 @@ button:disabled {
 }
 
 .ui-editor-properties input {
-    border: 1px solid #344359;
-    background: #202d3b;
+    border: 1px solid var(--chakra-colors-border);
+    background: var(--chakra-colors-bg-panel);
     padding: 5px;
     width: 100%;
-    color: #eef4ff
+    color: var(--chakra-colors-fg)
 }
 
 .ui-editor-properties form {
@@ -523,7 +515,7 @@ button:disabled {
 }
 
 .ui-editor-toolbar button, .ui-editor-properties form button {
-    background: #253044;
+    background: var(--chakra-colors-border);
     padding: 4px 10px;
     border-radius: 4px
 }
@@ -533,11 +525,11 @@ button:disabled {
     flex-shrink: 0;
     cursor: col-resize;
     touch-action: none;
-    background: #253044
+    background: var(--chakra-colors-border)
 }
 
 .ui-panel-splitter:hover {
-    background: #63e2c5
+    background: var(--chakra-colors-teal-fg)
 }
 
 .ui-editor-workspace {
@@ -571,12 +563,12 @@ button:disabled {
 
 /* Shared scrollbars for archive, XML tree, canvas and editors. */
 :root {
-    scrollbar-color: #52667d #111925;
+    scrollbar-color: var(--chakra-colors-fg-muted) var(--chakra-colors-bg);
     scrollbar-width: thin
 }
 
 * {
-    scrollbar-color: #52667d #111925;
+    scrollbar-color: var(--chakra-colors-fg-muted) var(--chakra-colors-bg);
     scrollbar-width: thin
 }
 
@@ -586,32 +578,32 @@ button:disabled {
 }
 
 ::-webkit-scrollbar-track {
-    background: #111925;
+    background: var(--chakra-colors-bg);
     border-radius: 6px
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #52667d;
-    border: 2px solid #111925;
+    background: var(--chakra-colors-fg-muted);
+    border: 2px solid var(--chakra-colors-bg);
     border-radius: 6px;
     min-height: 28px;
     min-width: 28px
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #7893ae
+    background: var(--chakra-colors-fg-muted)
 }
 
 ::-webkit-scrollbar-thumb:active {
-    background: #63e2c5
+    background: var(--chakra-colors-teal-fg)
 }
 
 ::-webkit-scrollbar-corner {
-    background: #111925
+    background: var(--chakra-colors-bg)
 }
 
 ::-webkit-resizer {
-    background: linear-gradient(135deg, #111925 50%, #52667d 50%, #52667d 60%, #111925 60%, #111925 70%, #52667d 70%, #52667d 80%, #111925 80%)
+    background: linear-gradient(135deg, var(--chakra-colors-bg) 50%, var(--chakra-colors-fg-muted) 50%, var(--chakra-colors-fg-muted) 60%, var(--chakra-colors-bg) 60%, var(--chakra-colors-bg) 70%, var(--chakra-colors-fg-muted) 70%, var(--chakra-colors-fg-muted) 80%, var(--chakra-colors-bg) 80%)
 }
 
 @media (forced-colors: active) {
@@ -630,7 +622,7 @@ button:disabled {
     display: block;
     font-size: 11px;
     letter-spacing: .05em;
-    color: #91abc9;
+    color: var(--chakra-colors-fg-muted);
     padding: 6px 8px 12px
 }
 
@@ -647,16 +639,16 @@ button:disabled {
 }
 
 .xml-tree-row:hover {
-    background: #202e40
+    background: var(--chakra-colors-bg-panel)
 }
 
 .xml-tree-row[data-selected] {
-    background: #16483e;
-    color: #c4fff1
+    background: var(--chakra-colors-teal-subtle);
+    color: var(--chakra-colors-teal-fg)
 }
 
 .xml-tree-row[data-focus] {
-    outline: 1px solid #63e2c5;
+    outline: 1px solid var(--chakra-colors-teal-fg);
     outline-offset: -1px
 }
 
@@ -680,20 +672,20 @@ button:disabled {
     height: 21px;
     flex-shrink: 0;
     border-radius: 4px;
-    background: #253b4e;
-    color: #8ed8ff;
+    background: var(--chakra-colors-bg-emphasized);
+    color: var(--chakra-colors-blue-fg);
     font-size: 14px;
     font-weight: 600
 }
 
 .xml-node-icon[data-kind=resource] {
-    background: #3c324d;
-    color: #d5b3ff
+    background: var(--chakra-colors-purple-subtle);
+    color: var(--chakra-colors-purple-fg)
 }
 
 .xml-node-icon[data-kind=text] {
-    background: #3c3827;
-    color: #f1d28d
+    background: var(--chakra-colors-orange-subtle);
+    color: var(--chakra-colors-orange-fg)
 }
 
 .xml-tree [data-part=branch-content] {
@@ -711,10 +703,10 @@ button:disabled {
     position: fixed;
     width: 230px;
     padding: 5px;
-    background: #182333;
-    border: 1px solid #49617b;
+    background: var(--chakra-colors-bg-panel);
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 7px;
-    box-shadow: 0 12px 36px #0009
+    box-shadow: 0 12px 36px var(--chakra-colors-black-alpha-600)
 }
 
 .xml-context-menu button {
@@ -729,12 +721,12 @@ button:disabled {
 }
 
 .xml-context-menu button:hover, .xml-context-menu button:focus-visible {
-    background: #16483e;
+    background: var(--chakra-colors-teal-subtle);
     outline: none
 }
 
 .xml-context-menu kbd {
-    color: #91abc9;
+    color: var(--chakra-colors-fg-muted);
     font-size: 10px
 }
 
@@ -743,20 +735,20 @@ button:disabled {
     align-items: center;
     gap: 8px;
     padding: 10px;
-    background: #182333;
-    border: 1px solid #49617b
+    background: var(--chakra-colors-bg-panel);
+    border: 1px solid var(--chakra-colors-border)
 }
 
 .xml-rename input {
-    background: #202d3b;
-    border: 1px solid #52667d;
+    background: var(--chakra-colors-bg-panel);
+    border: 1px solid var(--chakra-colors-fg-muted);
     padding: 5px;
     margin-left: 8px
 }
 
 .xml-rename button {
     padding: 5px 10px;
-    background: #253b4e;
+    background: var(--chakra-colors-bg-emphasized);
     border-radius: 4px
 }
 
@@ -774,7 +766,7 @@ button:disabled {
 
 .ui-editor-toolbar > button, .ui-editor-toolbar > select {
     padding: 0 10px;
-    border: 1px solid #344359;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 4px;
     font-size: 12px;
     line-height: 1;
@@ -783,7 +775,7 @@ button:disabled {
 
 .ui-editor-toolbar select {
     height: 32px;
-    background: #202d3b
+    background: var(--chakra-colors-bg-panel)
 }
 
 .ui-editor-toolbar input[type=checkbox] {
@@ -796,8 +788,8 @@ button:disabled {
     flex-direction: column;
     gap: 12px;
     padding: 16px;
-    background: #111925;
-    color: #dae3ef
+    background: var(--chakra-colors-bg);
+    color: var(--chakra-colors-fg)
 }
 
 .resource-window header {
@@ -809,7 +801,7 @@ button:disabled {
 
 .resource-window header button {
     padding: 6px 12px;
-    background: #253044;
+    background: var(--chakra-colors-border);
     margin-left: 8px
 }
 
@@ -829,13 +821,13 @@ button:disabled {
     height: 24px;
     padding: 0;
     margin-left: auto;
-    border: 1px solid #3b6173;
+    border: 1px solid var(--chakra-colors-teal-muted);
     border-radius: 4px;
-    color: #8ed8ff
+    color: var(--chakra-colors-blue-fg)
 }
 
 .ui-editor-tree .xml-resource-open:hover {
-    background: #16483e
+    background: var(--chakra-colors-teal-subtle)
 }
 
 .resource-loading {
@@ -843,10 +835,10 @@ button:disabled {
     align-items: center;
     gap: 9px;
     padding: 8px 12px;
-    border: 1px solid #315861;
+    border: 1px solid var(--chakra-colors-teal-muted);
     border-radius: 6px;
-    background: #112a32ed;
-    color: #b7eee4;
+    background: color-mix(in srgb, var(--chakra-colors-bg-panel) 90%, transparent);
+    color: var(--chakra-colors-teal-fg);
     font-size: 12px;
     max-width: 100%;
     pointer-events: none
@@ -862,7 +854,7 @@ button:disabled {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #91abc9;
+    color: var(--chakra-colors-fg-muted);
     font-size: 10px
 }
 
@@ -871,7 +863,7 @@ button:disabled {
     width: 100%;
     height: 4px;
     margin-top: 5px;
-    accent-color: #63e2c5
+    accent-color: var(--chakra-colors-teal-fg)
 }
 
 .gfx-loading {
@@ -890,7 +882,7 @@ button:disabled {
     align-items: center;
     gap: 4px;
     padding: 2px 12px 2px 0;
-    border-right: 1px solid #344359
+    border-right: 1px solid var(--chakra-colors-border)
 }
 
 .ui-ribbon-group:last-child {
@@ -899,7 +891,7 @@ button:disabled {
 
 .ui-ribbon-group small {
     font-size: 11px;
-    color: #a0b0c2
+    color: var(--chakra-colors-fg-muted)
 }
 
 .ui-ribbon-buttons, .ui-ribbon-cluster {
@@ -922,23 +914,23 @@ button:disabled {
     border: 1px solid transparent;
     border-radius: 3px;
     background: transparent;
-    color: #dce6f3;
+    color: var(--chakra-colors-fg);
     cursor: pointer
 }
 
 .ui-editor-toolbar .ui-ribbon-button:hover:not(:disabled) {
-    background: #31455f;
-    border-color: #6384a9
+    background: var(--chakra-colors-bg-emphasized);
+    border-color: var(--chakra-colors-fg-muted)
 }
 
 .ui-editor-toolbar .ui-ribbon-button[aria-pressed=true] {
-    background: #234a72;
-    border-color: #73a5d8;
-    color: #fff
+    background: var(--chakra-colors-blue-subtle);
+    border-color: var(--chakra-colors-blue-fg);
+    color: var(--chakra-colors-white)
 }
 
 .ui-ribbon-button:focus-visible {
-    outline: 2px solid #93c5fd;
+    outline: 2px solid var(--chakra-colors-blue-fg);
     outline-offset: 2px
 }
 
@@ -976,10 +968,10 @@ button:disabled {
 }
 
 .ui-editor-properties select {
-    background: #202d3b;
-    color: #eef4ff;
+    background: var(--chakra-colors-bg-panel);
+    color: var(--chakra-colors-fg);
     padding: 5px;
-    border: 1px solid #344359
+    border: 1px solid var(--chakra-colors-border)
 }
 
 .ui-property-align {
@@ -996,25 +988,25 @@ button:disabled {
     width: 32px;
     height: 30px;
     padding: 4px;
-    border: 1px solid #344359;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 3px;
-    background: #202d3b;
-    color: #dce6f3
+    background: var(--chakra-colors-bg-panel);
+    color: var(--chakra-colors-fg)
 }
 
 .ui-property-align .ui-ribbon-button[aria-pressed=true] {
-    background: #234a72;
-    border-color: #73a5d8;
+    background: var(--chakra-colors-blue-subtle);
+    border-color: var(--chakra-colors-blue-fg);
     color: white
 }
 
 .ui-property-align .ui-ribbon-button:hover:not(:disabled) {
-    background: #31455f
+    background: var(--chakra-colors-bg-emphasized)
 }
 
 .xml-tree-row[data-drop-target=true] {
-    background: #234a72 !important;
-    box-shadow: inset 0 2px #79c7ff, inset 0 -2px #79c7ff
+    background: var(--chakra-colors-blue-subtle) !important;
+    box-shadow: inset 0 2px var(--chakra-colors-blue-fg), inset 0 -2px var(--chakra-colors-blue-fg)
 }
 
 .xml-tree-row {
@@ -1026,7 +1018,7 @@ button:disabled {
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border: 1px solid #344359;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 4px
 }
 
@@ -1044,9 +1036,9 @@ button:disabled {
     flex-wrap: wrap;
     gap: 10px 16px;
     padding: 10px 12px;
-    border-bottom: 1px solid #344359;
-    background: #141e2b;
-    color: #dae3ef;
+    border-bottom: 1px solid var(--chakra-colors-border);
+    background: var(--chakra-colors-bg-panel);
+    color: var(--chakra-colors-fg);
     flex-shrink: 0
 }
 
@@ -1064,10 +1056,10 @@ button:disabled {
     gap: 7px;
     min-height: 32px;
     padding: 5px 12px;
-    border: 1px solid #43566f;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 6px;
-    background: #253044;
-    color: #e3edf9;
+    background: var(--chakra-colors-border);
+    color: var(--chakra-colors-fg);
     font-size: 12px;
     line-height: 20px;
     white-space: nowrap;
@@ -1076,18 +1068,18 @@ button:disabled {
 }
 
 .native-preview-actions button:hover:not(:disabled) {
-    background: #31455f;
-    border-color: #7294ba
+    background: var(--chakra-colors-bg-emphasized);
+    border-color: var(--chakra-colors-fg-muted)
 }
 
 .native-preview-actions button:focus-visible {
-    outline: 2px solid #93c5fd;
+    outline: 2px solid var(--chakra-colors-blue-fg);
     outline-offset: 2px
 }
 
 .native-preview-actions button[aria-pressed=true] {
-    background: #234a72;
-    border-color: #73a5d8
+    background: var(--chakra-colors-blue-subtle);
+    border-color: var(--chakra-colors-blue-fg)
 }
 
 .native-preview-actions button:disabled {
@@ -1106,9 +1098,9 @@ button:disabled {
     align-items: center;
     gap: 7px;
     padding: 5px 9px;
-    border: 1px solid #344359;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 6px;
-    background: #101925;
+    background: var(--chakra-colors-bg);
     font-size: 12px;
     line-height: 20px;
     max-width: 100%;
@@ -1116,38 +1108,38 @@ button:disabled {
 }
 
 .native-preview-engine {
-    color: #a0b0c2
+    color: var(--chakra-colors-fg-muted)
 }
 
 .native-preview-status-dot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #63e2c5;
+    background: var(--chakra-colors-teal-fg);
     flex-shrink: 0
 }
 
 .native-preview-status[data-state=loading] .native-preview-status-dot {
-    background: #e8c36a;
+    background: var(--chakra-colors-orange-fg);
     animation: native-status-pulse 1.2s ease-in-out infinite
 }
 
 .native-preview-status[data-state=paused] .native-preview-status-dot {
-    background: #91abc9
+    background: var(--chakra-colors-fg-muted)
 }
 
 .native-preview-status[data-state=error] .native-preview-status-dot {
-    background: #ff8d83
+    background: var(--chakra-colors-red-fg)
 }
 
 .native-preview-status[data-state=error] {
-    color: #ffb4a4;
-    border-color: #774747
+    color: var(--chakra-colors-red-fg);
+    border-color: var(--chakra-colors-red-subtle)
 }
 
 .native-preview-hint {
     font-size: 11px;
-    color: #91abc9;
+    color: var(--chakra-colors-fg-muted);
     flex-basis: 100%
 }
 
@@ -1193,6 +1185,6 @@ button:disabled {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: #91abc9;
+    color: var(--chakra-colors-fg-muted);
     font-size: 11px
 }

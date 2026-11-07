@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PW Forge",
-  "version": "0.1.1",
-  "identifier": "ru.lordralinc.pwforge",
+  "version": "0.1.3",
+  "identifier": "ru.lrpw.pwforge",
   "build": {
     "beforeDevCommand": "npm run build:native && npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -16,7 +16,8 @@
         "width": 1280,
         "height": 820,
         "minWidth": 900,
-        "minHeight": 600
+        "minHeight": 600,
+        "decorations": false
       }
     ],
     "security": {
@@ -24,10 +25,49 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "icon": [
       "icons/lrpw/icon.ico",
       "icons/lrpw/icon.png"
+    ],
+    "targets": [
+      "nsis"
+    ],
+    "resources": {
+      "../runtimes/native-gfx/native-gfx.exe": "native-gfx.exe",
+      "../runtimes/native-gfx/ImmWrapper.dll": "ImmWrapper.dll",
+      "../runtimes/native-gfx/ifc22.dll": "ifc22.dll",
+      "../runtimes/native-gfx/zlibwapi.dll": "zlibwapi.dll",
+      "../runtimes/native-gfx/msvcp140.dll": "msvcp140.dll",
+      "../runtimes/native-gfx/vcruntime140.dll": "vcruntime140.dll",
+      "../runtimes/native-gfx/d3dx9_43.dll": "d3dx9_43.dll"
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "pwforge"
+        ],
+        "name": "PW Forge Project",
+        "description": "PW Forge Project"
+      },
+      {
+        "ext": [
+          "pck"
+        ],
+        "name": "PCK Archive",
+        "description": "PCK Archive"
+      }
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/LRPW/pw-forge/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -3,6 +3,7 @@
   "windows": [
     "main",
     "search",
+    "settings",
     "resource-*"
   ],
   "permissions": [

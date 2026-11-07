@@ -32,7 +32,7 @@ fn sources(archive: &super::Archive) -> Vec<String> {
 #[tauri::command]
 pub fn list_ui_fonts(state: tauri::State<'_, App>) -> Result<FontList, String> {
     let guard = state.0.lock().map_err(err)?;
-    let archive = guard.as_ref().ok_or("Откройте архив")?;
+    let archive = guard.as_ref().ok_or("Open an archive")?;
     Ok(FontList { scope: archive.path.to_string_lossy().into_owned(), sources: sources(archive) })
 }
 #[tauri::command]
@@ -40,13 +40,13 @@ pub async fn read_ui_font(scope: String, source: String, state: tauri::State<'_,
     let state = state.inner().clone();
     let bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
         let guard = state.0.lock().map_err(err)?;
-        let archive = guard.as_ref().ok_or("Откройте архив")?;
-        if archive.path.to_string_lossy() != scope { return Err("Архив изменился".into()); }
-        if !sources(archive).contains(&source) { return Err("Шрифт не найден среди ресурсов клиента".into()); }
+        let archive = guard.as_ref().ok_or("Open an archive")?;
+        if archive.path.to_string_lossy() != scope { return Err("Archive has changed".into()); }
+        if !sources(archive).contains(&source) { return Err("Font was not found among the client resources".into()); }
         if let Some(index) = source.strip_prefix("entry:") {
             archive.data(index.parse::<usize>().map_err(err)?)
         } else {
-            std::fs::read(archive.path.parent().ok_or("Нет каталога клиента")?.join(source.strip_prefix("disk:").ok_or("Неверный источник шрифта")?)).map_err(err)
+            std::fs::read(archive.path.parent().ok_or("Client directory is missing")?.join(source.strip_prefix("disk:").ok_or("Invalid font source")?)).map_err(err)
         }
     }).await.map_err(err)??;
     Ok(tauri::ipc::Response::new(bytes))

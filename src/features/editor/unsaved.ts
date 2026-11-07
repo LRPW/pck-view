@@ -1,6 +1,6 @@
-import {useEffect} from 'react';
 import {getCurrentWindow} from '@tauri-apps/api/window';
 import {confirm} from '@tauri-apps/plugin-dialog';
+import {useEffect} from 'react';
 
 const documents = new Map<string, boolean>();
 let installed = false;
@@ -27,7 +27,7 @@ export function useUnsavedGuard(name: string, dirty: boolean) {
             if (prompting) return;
             prompting = true;
             try {
-                if (await confirm('Есть несохранённые изменения или выполняется операция: ' + names.join(', ') + '. Выйти без сохранения?', {
+                if (await confirm("There are unsaved changes or an operation is running: " + names.join(', ') + ". Exit without saving?", {
                     title: 'PW Forge',
                     kind: 'warning'
                 })) await getCurrentWindow().destroy();

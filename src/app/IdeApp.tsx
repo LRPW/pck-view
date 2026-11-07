@@ -1,49 +1,59 @@
-import {LocaleEditor} from '../features/editor/LocaleEditor';
-import {EditorSwitch} from '../features/editor/EditorSwitch';
-import {notifications} from './notifications';
-import {TaskNpcEditor} from '../features/editor/TaskNpcEditor';
-import {TasksEditor} from '../features/editor/TasksEditor';
-import {DomainEditor} from '../features/editor/DomainEditor';
-import {ResourcePicker} from '../features/editor/ResourcePicker';
-import {useColumnWidth} from '../features/editor/useColumnWidth';
-import {ColumnDivider, resizeWidth} from '../features/editor/ColumnDivider';
-import {Progress} from '@chakra-ui/react';
-import type {IdeHit} from '../features/search/IdeSearchWindow';
-import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {ElementsProfileField} from './ElementsProfileField';
+import {ClientVersionField} from './ClientVersionField';
+import {matchesShortcut} from './shortcuts';
+import {FaGithub} from 'react-icons/fa';
+import {getCurrentWindow} from '@tauri-apps/api/window';
+import {bindActionCreators} from '@reduxjs/toolkit';
+import {useAppDispatch, useAppSelector, useAppStore} from '../store';
+import {workspaceActions} from '../store/workspace-slice';
+import {message, sourceText, t} from "../i18n";
+import {
+    Alert,
+    Box,
+    Button,
+    Dialog,
+    Field,
+    Input,
+    Link,
+    NativeSelect,
+    Portal,
+    Progress,
+    Stack,
+    Text
+} from "@chakra-ui/react";
 import {invoke} from '@tauri-apps/api/core';
-import {confirm, open, save} from '@tauri-apps/plugin-dialog';
 import {listen} from '@tauri-apps/api/event';
+import {confirm, open, save} from '@tauri-apps/plugin-dialog';
+import type {ComponentProps, ReactNode} from "react";
+import {lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {ArchiveTree} from '../features/archive/ArchiveTree';
-import {ElementsEditor} from '../features/editor/ElementsEditor';
-import {TextEditor, type TextEditorHandle} from '../features/editor/TextEditor';
-import {useUnsavedGuard} from '../features/editor/unsaved';
-import {ResourceContext, resourceInvoke, type ResourceScope} from '../features/editor/resource-context';
-import {InterfaceEditor} from '../features/media/InterfaceEditor';
-import {NativeGfxPreview} from '../features/media/NativeGfxPreview';
-import {MediaPreview, mediaType} from '../features/media/MediaPreview';
+import {ColumnDivider, resizeWidth} from '../features/editor/ColumnDivider';
 import {isImageResource} from '../features/editor/ResourceFieldPreview';
+import {ResourcePicker} from '../features/editor/ResourcePicker';
+import {type ElementsProfile, type ResourceScope} from '../features/editor/resource-context';
+import {structuredFormat} from '../features/editor/server-records';
+import {useUnsavedGuard} from '../features/editor/unsaved';
+import {useColumnWidth} from '../features/editor/useColumnWidth';
+import type {IdeHit} from '../features/search/IdeSearchWindow';
+import {IdeMenu, type IdeMenuActions} from "./IdeMenu";
+import {NewProject} from "./NewProject";
+import type {ResourcePick, Tab} from "./ide-types";
+import {notifications} from './notifications';
 
 import '../styles/ide.css';
 
-type Tab = {
-    key: string;
-    scope: number;
-    index?: number;
-    resource?: string;
-    kind: 'file' | 'elements' | 'gshop' | 'domain' | 'tasks' | 'task-npc' | 'locale' | 'source' | 'new';
-    title: string;
-    dirty: boolean;
-    jump?: IdeHit['hit'];
-    itemJump?: { id: number; npc?: boolean }
-};
+
+const AiPolicyEditor = lazy(() => import('../features/editor/AiPolicyEditor').then(module => ({default: module.AiPolicyEditor})));
+const DomainEditor = lazy(() => import('../features/editor/DomainEditor').then(module => ({default: module.DomainEditor})));
+const LocaleEditor = lazy(() => import('../features/editor/LocaleEditor').then(module => ({default: module.LocaleEditor})));
+const ServerRecordsEditor = lazy(() => import('../features/editor/ServerRecordsEditor').then(module => ({default: module.ServerRecordsEditor})));
+const TaskNpcEditor = lazy(() => import('../features/editor/TaskNpcEditor').then(module => ({default: module.TaskNpcEditor})));
+const TasksEditor = lazy(() => import('../features/editor/TasksEditor').then(module => ({default: module.TasksEditor})));
+const ElementsTab = lazy(() => import('./ElementsTab').then(module => ({default: module.ElementsTab})));
+const ResourceDocument = lazy(() => import('./ResourceDocument').then(module => ({default: module.ResourceDocument})));
+
 type SavedTab = { source: string; entry?: string; resource?: string; locale?: boolean };
-type ResourcePick = {
-    tab: string;
-    scope: ResourceScope;
-    field: string;
-    imageOnly: boolean;
-    choose: (path: string) => void
-};
+
 const sessionKey = 'pwforge:ide:tabs';
 
 function readSession(): { tabs: SavedTab[]; active: number } | undefined {
@@ -57,61 +67,89 @@ function readSession(): { tabs: SavedTab[]; active: number } | undefined {
 const normalize = (s: string) => s.replace(/\\/g, '/').replace(/^\/\/\?\//, '').toLowerCase();
 const base = (s: string) => s.replace(/\\/g, '/').split('/').pop() ?? s;
 
-function decode(bytes: number[]) {
-    const b = new Uint8Array(bytes);
-    let encoding = 'utf-8';
-    if (bytes[0] === 255 && bytes[1] === 254) encoding = 'utf-16le'; else if (bytes[0] === 254 && bytes[1] === 255) encoding = 'utf-16be'; else {
-        try {
-            new TextDecoder('utf-8', {fatal: true}).decode(b);
-        } catch {
-            encoding = 'gbk';
-        }
-    }
-    return {encoding, text: new TextDecoder(encoding, {ignoreBOM: true}).decode(b)};
+
+function buildStage(stage: string) {
+    if (stage.startsWith('Archive workers: ')) return t('Archive workers') + ': ' + stage.slice(17);
+    if (stage.startsWith('Building client/')) return t('Building client files') + ': ' + stage.slice('Building '.length);
+    if (stage.startsWith('Publishing ')) return t('Publishing file') + ': ' + stage.slice(11);
+    if (stage.startsWith('Copying ')) return t('Copying file') + ': ' + stage.slice(8);
+    const separator = stage.indexOf(': ');
+    if (separator >= 0) return stage.slice(0, separator) + ': ' + message(stage.slice(separator + 2));
+    return message(stage);
+}
+
+function EditorTabContent({active, children}: { active: boolean; children: ReactNode }) {
+    const [visited, setVisited] = useState(active);
+    useEffect(() => {
+        if (active) setVisited(true);
+    }, [active]);
+
+    if (!active && !visited) return null;
+    return <Suspense fallback={<Box className="ide-loading" role="status">{t('Loading…')}</Box>}>
+        {children}
+    </Suspense>;
 }
 
 export function IdeApp() {
     const [sidebarWidth, setSidebarWidth] = useColumnWidth('ide.tree', 320);
     const [resourcePick, setResourcePick] = useState<ResourcePick>();
     const [restored, setRestored] = useState(false);
-    const [scopes, setScopes] = useState<ResourceScope[]>([]), [tabs, setTabs] = useState<Tab[]>([]), [active, setActive] = useState('');
+    const [projectSettings, setProjectSettings] = useState<{
+        id: number;
+        path: string;
+        version: string;
+        gshopVersion: number | null;
+        elementsProfile: ElementsProfile | null;
+        issues?: { path: string; div: boolean; mono: boolean; error: string | null }[]
+    } | null>(null);
+    const xmlDrafts = useRef(new Map<number, Map<number, string>>());
+    const trackXmlDraft = useCallback((scope: number, index: number, text?: string) => {
+        const drafts = xmlDrafts.current.get(scope) ?? new Map<number, string>();
+        if (text === undefined) drafts.delete(index); else drafts.set(index, text);
+        if (drafts.size) xmlDrafts.current.set(scope, drafts); else xmlDrafts.current.delete(scope);
+    }, []);
+    const [scopes, setScopes] = useState<ResourceScope[]>([]);
+    const dispatch = useAppDispatch();
+    const store = useAppStore();
+    const {
+        tabs, active, busy, status, error, opening, openProgress, textExport,
+        exportRevision, fileRevisions, savedArchives,
+    } = useAppSelector(state => state.workspace);
+    const {
+        tabOpened, setActive, tabClosed, tabDirtyChanged, tabSearchJumpChanged, tabItemJumpChanged,
+        archiveDirtyChanged, filesChanged, exportRevisionChanged, textExportProgressChanged,
+        setBusy, setStatus, setError, setOpening, setOpenProgress, setTextExport,
+    } = useMemo(() => bindActionCreators(workspaceActions, dispatch), [dispatch]);
     const picker = resourcePick?.tab === active ? resourcePick : undefined;
     const cancelResourcePick = useCallback((tab: string) => setResourcePick(current => current?.tab === tab ? undefined : current), []);
     useEffect(() => {
         if (resourcePick && resourcePick.tab !== active) setResourcePick(undefined);
     }, [active, resourcePick]);
-    const [query, setQuery] = useState(''), [busy, setBusy] = useState(false), [status, setStatus] = useState(''), [error, setError] = useState('');
-    const [opening, setOpening] = useState<string>();
-    const [openProgress, setOpenProgress] = useState<{ stage: string; completed: number; total: number }>();
-    const [textExport, setTextExport] = useState<{
-        operation: string;
-        stage: string;
-        completed: number;
-        total: number
-    }>();
-    const [exportRevision, setExportRevision] = useState(0);
-    const [fileRevisions, setFileRevisions] = useState<Record<string, number>>({});
+    const [query, setQuery] = useState('');
     const scopesRef = useRef(scopes);
     scopesRef.current = scopes;
-    const tabsRef = useRef(tabs);
-    tabsRef.current = tabs;
-    const [savedArchives, setSavedArchives] = useState<Record<number, boolean>>({});
-    const activeTab = tabs.find(t => t.key === active);
+    const [help, setHelp] = useState(false);
+    const [installingUpdate, setInstallingUpdate] = useState(false);
+    const activeTab = tabs.find(tabItem => tabItem.key === active);
     const activeScope = scopes.find(s => s.id === activeTab?.scope);
-    useUnsavedGuard('IDE', tabs.some(t => t.dirty) || busy || Object.values(savedArchives).some(Boolean));
-    const setDirty = useCallback((key: string, dirty: boolean) => setTabs(old => old.some(t => t.key === key && t.dirty !== dirty) ? old.map(t => t.key === key ? {
-        ...t,
-        dirty
-    } : t) : old), []);
+    useUnsavedGuard('IDE', tabs.some(tabItem => tabItem.dirty) || busy || Object.values(savedArchives).some(Boolean));
+    const setDirty = useCallback((key: string, dirty: boolean) => {
+        tabDirtyChanged({key, dirty});
+    }, [tabDirtyChanged]);
 
     function addTab(tab: Tab) {
-        setTabs(old => old.some(t => t.key === tab.key) ? old : [...old, tab]);
-        setActive(tab.key);
+        tabOpened(tab);
     }
 
     function openLocale(scope: ResourceScope) {
         const key = `locale:${scope.id}`;
-        addTab({key, scope: scope.id, kind: 'locale', title: `Переводчик · ${base(scope.path)}`, dirty: false});
+        addTab({
+            key,
+            scope: scope.id,
+            kind: 'locale',
+            title: t("Translator · {value0}", {value0: base(scope.path)}),
+            dirty: false
+        });
         return key;
     }
 
@@ -123,7 +161,7 @@ export function IdeApp() {
             key,
             scope: scope.id,
             index,
-            kind: /^elements.*\.data$/i.test(base(e.name)) ? 'elements' : /^gshop[12]?(?:\.edited)*\.data$/i.test(base(e.name)) ? 'gshop' : /^domain(?:2(?:_cross)?)?\.data$/i.test(base(e.name)) ? 'domain' : /^task_npc\.data$/i.test(base(e.name)) ? 'task-npc' : /^(?:tasks|dyn_tasks)\.data$/i.test(base(e.name)) ? 'tasks' : 'file',
+            kind: structuredFormat(e.name) ? 'server-records' : /^aipolicy\.data$/i.test(base(e.name)) ? 'aipolicy' : /^elements.*\.data$/i.test(base(e.name)) ? 'elements' : /^gshop[12]?(?:\.edited)*\.data$/i.test(base(e.name)) ? 'gshop' : /^domain(?:2(?:_cross)?)?\.data$/i.test(base(e.name)) ? 'domain' : /^task_npc\.data$/i.test(base(e.name)) ? 'task-npc' : /^(?:tasks|dyn_tasks)\.data$/i.test(base(e.name)) ? 'tasks' : 'file',
             title: base(e.name),
             dirty: false
         });
@@ -140,6 +178,27 @@ export function IdeApp() {
         return key;
     }
 
+    async function importServer(scope: ResourceScope) {
+        const source = await open({directory: true, multiple: false, title: t("Server files folder")});
+        if (typeof source !== 'string') return;
+        setBusy(true);
+        setError('');
+        try {
+            const updated = {
+                ...await invoke<ResourceScope>('ide_import_server', {id: scope.id, source}),
+                clientVersion: scope.clientVersion,
+                gshopVersion: scope.gshopVersion,
+                elementsProfile: scope.elementsProfile
+            };
+            setScopes(current => current.map(item => item.id === scope.id ? updated : item));
+            scopesRef.current = scopesRef.current.map(item => item.id === scope.id ? updated : item);
+        } catch (error) {
+            setError(String(error));
+        } finally {
+            setBusy(false);
+        }
+    }
+
     async function loadPath(path: string, showTab = true) {
         setBusy(true);
         setOpening(base(path));
@@ -149,8 +208,35 @@ export function IdeApp() {
             let scope = scopesRef.current.find(s => normalize(s.path) === normalize(path));
             if (!scope) {
                 scope = await invoke<ResourceScope>('ide_open', {path});
-                setScopes(old => [...old, scope!]);
+                if (scope.kind === 'project') {
+                    const previous = scopesRef.current.find(item => item.kind === 'project' && item.id !== scope!.id);
+                    if (previous && store.getState().workspace.tabs.some(tab => tab.scope === previous.id && tab.dirty)) {
+                        await invoke('ide_close', {id: scope.id});
+                        throw new Error(t("Save the open project changes first."));
+                    }
+                    const view = await invoke<{
+                        project: {
+                            client_version: string;
+                            gshop_version?: number | null;
+                            elements_profile?: ElementsProfile | null
+                        }
+                    }>('project_open', {path: scope.path});
+                    scope = {
+                        ...scope,
+                        clientVersion: view.project.client_version,
+                        gshopVersion: view.project.gshop_version ?? null,
+                        elementsProfile: view.project.elements_profile ?? null
+                    };
+                    if (previous) {
+                        await invoke('ide_close', {id: previous.id});
+                        for (const tab of store.getState().workspace.tabs) {
+                            if (tab.scope === previous.id) tabClosed(tab.key);
+                        }
+                        scopesRef.current = scopesRef.current.filter(item => item.id !== previous.id);
+                    }
+                }
                 scopesRef.current = [...scopesRef.current, scope];
+                setScopes(scopesRef.current);
             }
             if (showTab) {
                 if (scope.kind === 'file') openEntry(scope, 0); else addTab({
@@ -181,25 +267,28 @@ export function IdeApp() {
     }
 
     async function exportTexts(scope: ResourceScope) {
-        if (busy || tabsRef.current.some(tab => tab.scope === scope.id && tab.dirty)) return;
+        if (busy || store.getState().workspace.tabs.some(tab => tab.scope === scope.id && tab.dirty)) return;
         setBusy(true);
-        setTextExport({operation: 'Экспорт текстов', stage: '', completed: 0, total: 0});
+        setTextExport({operation: t("Export texts"), stage: '', completed: 0, total: 0});
         try {
             const result = await invoke<{
                 count: number;
                 skipped: number;
                 path: string
             }>('ide_export_texts', {id: scope.id});
-            setExportRevision(value => value + 1);
+            exportRevisionChanged();
             notifications.create({
                 type: result.skipped ? 'warning' : 'success',
-                title: `Текстов выгружено · ${result.count.toLocaleString()}`,
-                description: result.skipped ? `${result.path} · Файлов с ошибками: ${result.skipped}` : result.path
+                title: t("Texts exported · {value0}", {value0: result.count.toLocaleString()}),
+                description: result.skipped ? t("{value0} · Files with errors: {value1}", {
+                    value0: result.path,
+                    value1: result.skipped
+                }) : result.path
             });
         } catch (reason) {
             notifications.create({
                 type: 'error',
-                title: 'Не удалось экспортировать тексты',
+                title: t("Failed to export texts"),
                 description: String(reason)
             });
         } finally {
@@ -209,9 +298,9 @@ export function IdeApp() {
     }
 
     async function applyLocale(scope: ResourceScope, language: string): Promise<string[]> {
-        if (busy || tabsRef.current.some(tab => tab.scope === scope.id && tab.dirty)) return ['Сначала сохраните открытые правки проекта.'];
+        if (busy || store.getState().workspace.tabs.some(tab => tab.scope === scope.id && tab.dirty)) return [t("Save the open project changes first.")];
         setBusy(true);
-        setTextExport({operation: 'Применение перевода', stage: '', completed: 0, total: 0});
+        setTextExport({operation: t("Applying translation"), stage: '', completed: 0, total: 0});
         try {
             const result = await invoke<{ updated: number[]; errors: string[] }>('ide_locale_apply', {
                 id: scope.id,
@@ -222,22 +311,15 @@ export function IdeApp() {
                 ...item, entries: item.entries.map((entry, index) =>
                     updated.has(index) ? {...entry, changed: true} : entry)
             } : item));
-            setFileRevisions(old => {
-                const next = {...old};
-                for (const index of updated) {
-                    const key = `${scope.id}:${index}`;
-                    next[key] = (next[key] ?? 0) + 1;
-                }
-                return next;
-            });
+            filesChanged({scope: scope.id, indices: [...updated]});
             notifications.create({
                 type: result.errors.length ? 'warning' : 'success',
-                title: `Обновлено файлов · ${updated.size}`,
-                description: result.errors.length ? `Пропущено · ${result.errors.length}` : undefined
+                title: t("Files updated · {value0}", {value0: updated.size}),
+                description: result.errors.length ? t("Skipped · {value0}", {value0: result.errors.length}) : undefined
             });
             return result.errors;
         } catch (reason) {
-            notifications.create({type: 'error', title: 'Не удалось применить перевод', description: String(reason)});
+            notifications.create({type: 'error', title: t("Failed to apply translation"), description: String(reason)});
             return [];
         } finally {
             setBusy(false);
@@ -253,14 +335,12 @@ export function IdeApp() {
                 if (!scope) return;
                 const index = payload.source ? scope.entries.findIndex(entry => normalize(entry.path) === normalize(payload.path)) : 0;
                 if (index < 0) {
-                    setError('Файл из результатов поиска не найден');
+                    setError(t("File from search results was not found"));
                     return;
                 }
                 openEntry(scope, index);
-                setTabs(previous => previous.map(tab => tab.key === scope.id + ':' + index ? {
-                    ...tab,
-                    jump: payload.hit
-                } : tab));
+                if (!payload.structured) tabSearchJumpChanged({key: scope.id + ':' + index, hit: payload.hit});
+                await getCurrentWindow().setFocus().catch(reason => setError(String(reason)));
             })();
         });
         return () => {
@@ -291,7 +371,7 @@ export function IdeApp() {
                         if (typeof tab?.source !== 'string') continue;
                         if (!loaded.has(tab.source)) loaded.set(tab.source, await loadPath(tab.source, false));
                         const scope = loaded.get(tab.source);
-                        if (!scope) continue;
+                        if (!scope || !scopesRef.current.some(item => item.id === scope.id)) continue;
                         let key: string | undefined;
                         if (tab.locale) {
                             key = openLocale(scope);
@@ -343,15 +423,44 @@ export function IdeApp() {
     }, [active, restored, scopes, tabs]);
     useEffect(() => {
         const p = listen<{ operation: string; stage: string; completed: number; total: number }>('pck-progress', e => {
-            if (e.payload.operation === 'Открытие') {
+            if (e.payload.operation === 'Build project' && e.payload.stage.startsWith('__worker:')) {
+                const match = e.payload.stage.match(/^__worker:(\d+):(.*)$/);
+                if (match) {
+                    const data = JSON.parse(match[2]) as { archive: string; stage: string };
+                    setBuildInfo(current => current ? {
+                        ...current,
+                        workers: {
+                            ...current.workers,
+                            [match[1]]: {...data, completed: e.payload.completed, total: e.payload.total}
+                        }
+                    } : current);
+                }
+                return;
+            }
+            if (e.payload.operation === 'Build project' && e.payload.stage === '__overall') {
+                setBuildInfo(current => current ? {
+                    ...current,
+                    overallDone: Math.max(current.overallDone ?? 0, e.payload.completed),
+                    overallTotal: e.payload.total
+                } : current);
+                return;
+            }
+            if (e.payload.operation === 'Build project') setBuildInfo(current => current?.running ? {
+                ...current,
+                stage: buildStage(e.payload.stage),
+                completed: e.payload.completed,
+                total: e.payload.total,
+                log: [...current.log, `${buildStage(e.payload.stage)} · ${e.payload.completed}/${e.payload.total}`].slice(-500)
+            } : current);
+            if (sourceText(e.payload.operation) === "Opening") {
                 setOpenProgress(e.payload);
                 return;
             }
-            if (e.payload.operation === 'Экспорт текстов' || e.payload.operation === 'Применение перевода') {
-                setTextExport(current => current ? e.payload : current);
+            if (sourceText(e.payload.operation) === "Export texts" || sourceText(e.payload.operation) === "Applying translation") {
+                textExportProgressChanged(e.payload);
                 return;
             }
-            setStatus(`${e.payload.operation} · ${e.payload.stage}${e.payload.total ? ' · ' + e.payload.completed + ' / ' + e.payload.total : ''}`);
+            setStatus(`${sourceText(e.payload.operation)} · ${e.payload.stage}${e.payload.total ? ' · ' + e.payload.completed + ' / ' + e.payload.total : ''}`);
         });
         return () => {
             void p.then(f => f());
@@ -359,36 +468,41 @@ export function IdeApp() {
     }, []);
     useEffect(() => {
         const f = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyF') {
+            if (matchesShortcut(e, 'build') || matchesShortcut(e, 'buildFull')) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!busy && !e.repeat && activeScope?.kind === 'project') void build(activeScope, matchesShortcut(e, 'buildFull'));
+                return;
+            }
+            if (matchesShortcut(e, 'search')) {
+                e.stopPropagation();
                 e.preventDefault();
                 void openSearch();
                 return;
             }
-            if ((e.ctrlKey || e.metaKey) && e.code === 'KeyO') {
+            if (matchesShortcut(e, 'open')) {
+                e.stopPropagation();
                 e.preventDefault();
                 if (!busy) void openFile();
             }
-            if ((e.ctrlKey || e.metaKey) && e.code === 'KeyW') {
+            if (matchesShortcut(e, 'close')) {
+                e.stopPropagation();
                 e.preventDefault();
                 if (active) void closeTab(active);
             }
         };
-        window.addEventListener('keydown', f);
-        return () => window.removeEventListener('keydown', f);
+        window.addEventListener('keydown', f, true);
+        return () => window.removeEventListener('keydown', f, true);
     });
 
     async function closeTab(key: string) {
-        const tab = tabsRef.current.find(t => t.key === key);
+        const tab = store.getState().workspace.tabs.find(tabItem => tabItem.key === key);
         if (!tab) return;
-        if (tab.dirty && !(await confirm(`Закрыть «${tab.title}» без сохранения?`, {
+        if (tab.dirty && !(await confirm(t("Close “{value0}” without saving?", {value0: tab.title}), {
             title: 'PW Forge',
             kind: 'warning'
         }))) return;
-        setTabs(old => {
-            const next = old.filter(t => t.key !== key);
-            if (active === key) setActive(next[Math.max(0, old.findIndex(t => t.key === key) - 1)]?.key ?? '');
-            return next;
-        });
+        tabClosed(key);
     }
 
     const treeEntries = useMemo(() => scopes.flatMap(scope => scope.entries.map((entry, index) => ({
@@ -453,11 +567,11 @@ export function IdeApp() {
             index = 0;
         }
         if (index < 0) {
-            setError('В проекте нет elements.data');
+            setError(t("The project has no elements.data"));
             return;
         }
         const key = openEntry(target, index);
-        setTabs(old => old.map(tab => tab.key === key ? {...tab, itemJump: {id, npc}} : tab));
+        if (key) tabItemJumpChanged({key, id, npc});
     }
 
     async function saveArchive(scope: ResourceScope, as = false) {
@@ -469,7 +583,7 @@ export function IdeApp() {
         setBusy(true);
         try {
             await invoke('ide_save_archive', {id: scope.id, path});
-            setSavedArchives(old => ({...old, [scope.id]: false}));
+            archiveDirtyChanged({id: scope.id, dirty: false});
             setStatus(path);
         } catch (e) {
             setError(String(e));
@@ -478,17 +592,87 @@ export function IdeApp() {
         }
     }
 
-    async function build(scope: ResourceScope) {
-        if (tabsRef.current.some(t => t.scope === scope.id && t.dirty)) {
-            setError('Сохраните изменения в редакторах.');
+    const [buildInfo, setBuildInfo] = useState<{
+        running: boolean;
+        startedAt: number;
+        finishedAt?: number;
+        project: string;
+        stage: string;
+        completed: number;
+        total: number;
+        directory?: string;
+        archives?: string[];
+        loose_files?: number;
+        server_files?: string[];
+        client_files?: string[];
+        error?: string;
+        log: string[];
+        workers?: Record<string, { archive: string; stage: string; completed: number; total: number }>;
+        overallDone?: number;
+        overallTotal?: number;
+        cancelling?: boolean
+    } | null>(null);
+    const [buildClock, setBuildClock] = useState(Date.now());
+    useEffect(() => {
+        if (!buildInfo?.running) return;
+        setBuildClock(Date.now());
+        const timer = setInterval(() => setBuildClock(Date.now()), 1000);
+        return () => clearInterval(timer);
+    }, [buildInfo?.running]);
+    const buildElapsed = buildInfo ? Math.max(0, ((buildInfo.finishedAt ?? buildClock) - buildInfo.startedAt) / 1000) : 0;
+    const buildFraction = buildInfo?.overallTotal ? (buildInfo.overallDone ?? 0) / buildInfo.overallTotal : 0;
+    const buildEta = buildFraction > 0 && buildElapsed >= 3 ? buildElapsed * (1 - buildFraction) / buildFraction : null;
+    const formatBuildTime = (seconds: number) => {
+        const total = Math.max(0, Math.round(seconds));
+        return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+    };
+    const buildLogRef = useRef<HTMLPreElement>(null);
+    const followBuildLog = useRef(true);
+    useEffect(() => {
+        const frame = requestAnimationFrame(() => {
+            const log = buildLogRef.current;
+            if (log && followBuildLog.current) log.scrollTop = log.scrollHeight;
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [buildInfo?.log]);
+
+    async function build(scope: ResourceScope, full = false) {
+        if (store.getState().workspace.tabs.some(tabItem => tabItem.scope === scope.id && tabItem.dirty)) {
+            setError(t("Save changes in the editors."));
             return;
         }
         setBusy(true);
         try {
-            const r = await invoke<{ directory: string }>('project_build', {manifest: scope.path});
+            followBuildLog.current = true;
+            setBuildInfo({
+                running: true,
+                startedAt: Date.now(),
+                project: scope.path,
+                stage: '',
+                completed: 0,
+                total: 0,
+                log: []
+            });
+            const r = await invoke<{
+                directory: string;
+                archives: string[];
+                loose_files: number;
+                server_files: string[];
+                client_files: string[]
+            }>('project_build', {
+                manifest: scope.path,
+                full,
+                threads: (localStorage.getItem('pwforge:build-threads') ?? 'auto') === 'auto' ? 0 : Math.max(1, Math.min(32, Number(localStorage.getItem('pwforge:build-threads')) || 4))
+            });
+            setBuildInfo(current => current ? {...current, ...r, running: false, finishedAt: Date.now()} : current);
             setStatus(r.directory);
         } catch (e) {
-            setError(String(e));
+            setBuildInfo(current => current ? {
+                ...current,
+                running: false,
+                finishedAt: Date.now(),
+                error: String(e)
+            } : current);
         } finally {
             setBusy(false);
         }
@@ -497,48 +681,346 @@ export function IdeApp() {
     function saved(scope: ResourceScope, index: number) {
         notifications.create({
             type: 'success',
-            title: 'Сохранено',
+            title: t("Saved"),
             description: base(scope.entries[index]?.name ?? scope.path)
         });
-        if (scope.kind === 'archive') setSavedArchives(v => ({...v, [scope.id]: true}));
+        if (scope.kind === 'archive') archiveDirtyChanged({id: scope.id, dirty: true});
         setScopes(old => old.map(s => s.id === scope.id ? {
             ...s,
             entries: s.entries.map((e, i) => i === index ? {...e, changed: true} : e)
         } : s));
     }
 
-    return <div className="forge-ide">
-        <header className="ide-header"><strong>PW Forge</strong>
-            <button disabled={busy} onClick={() => addTab({
-                key: 'new-project',
-                scope: 0,
-                kind: 'new',
-                title: 'Новый проект',
-                dirty: false
-            })}>Новый проект
-            </button>
-            <button disabled={busy} onClick={() => void openFile()}>Открыть</button>
-            <button title="Ctrl+Shift+F" onClick={() => void openSearch()}>Поиск в файлах</button>
-            {activeScope && <button disabled={busy || tabs.some(tab => tab.scope === activeScope.id && tab.dirty)}
-                                    onClick={() => void exportTexts(activeScope)}>Экспорт
-                текстов</button>}{activeScope &&
-                <button onClick={() => openLocale(activeScope)}>Переводчик</button>}{activeScope?.kind === 'project' &&
-                <button disabled={busy} onClick={() => void build(activeScope)}>Собрать
-                    изменения</button>}{activeScope?.kind === 'archive' && <>
-                <button disabled={busy || tabs.some(t => t.scope === activeScope.id && t.dirty)}
-                        onClick={() => void saveArchive(activeScope)}>Сохранить
-                    PCK{savedArchives[activeScope.id] ? ' ●' : ''}</button>
-                <button disabled={busy || tabs.some(t => t.scope === activeScope.id && t.dirty)}
-                        onClick={() => void saveArchive(activeScope, true)}>Сохранить PCK как…
-                </button>
-            </>}</header>
-        {error && <div className="ide-error" role="alert">{error}
-            <button onClick={() => setError('')}>×</button>
-        </div>}
+    const handleResourcePick: ComponentProps<typeof ResourcePicker>["choose"] = i => {
+        if (!picker) return;
+        const entry = pickerEntries[i];
+        if (!entry) return;
+        picker.choose(entry.name.replaceAll('/', '\\'));
+        cancelResourcePick(picker.tab);
+    };
+
+    const menuActions: IdeMenuActions = {
+        create: () => addTab({key: 'new-project', scope: 0, kind: 'new', title: t("New project"), dirty: false}),
+        open: () => {
+            void openFile();
+        },
+        save: () => {
+            window.dispatchEvent(new Event('pw-forge-save'));
+        },
+        close: () => {
+            void closeTab(active);
+        },
+        saveArchive: () => {
+            if (activeScope) void saveArchive(activeScope);
+        },
+        saveArchiveAs: () => {
+            if (activeScope) void saveArchive(activeScope, true);
+        },
+        search: () => {
+            void openSearch();
+        },
+        projectSettings: () => {
+            if (activeScope?.kind === 'project') setProjectSettings({
+                id: activeScope.id,
+                path: activeScope.path,
+                version: activeScope.clientVersion ?? '1.5.5-lrpw',
+                gshopVersion: activeScope.gshopVersion ?? null,
+                elementsProfile: activeScope.elementsProfile ?? null
+            });
+        },
+        settings: () => {
+            void invoke('open_settings_window').catch(error => setError(String(error)));
+        },
+        importServer: () => {
+            if (activeScope) void importServer(activeScope);
+        },
+        cleanBuilds: () => {
+            if (!activeScope) return;
+            const scope = activeScope;
+            void (async () => {
+                if (!await confirm(t('Delete old builds? The latest build will be kept.'), {
+                    title: t('Clean old builds'),
+                    kind: 'warning'
+                })) return;
+                setBusy(true);
+                try {
+                    const count = await invoke<number>('project_clean_builds', {manifest: scope.path, keep: 1});
+                    setStatus(t('Deleted builds: {value0}', {value0: count}));
+                } catch (error) {
+                    setError(String(error));
+                } finally {
+                    setBusy(false);
+                }
+            })();
+        },
+        buildFull: () => {
+            if (activeScope) void build(activeScope, true);
+        },
+        build: () => {
+            if (activeScope) void build(activeScope);
+        },
+        exportTexts: () => {
+            if (activeScope) void exportTexts(activeScope);
+        },
+        translate: () => {
+            if (activeScope) openLocale(activeScope);
+        },
+        checkUpdates: () => {
+            void (async () => {
+                setBusy(true);
+                try {
+                    const update = await invoke<{ version: string; portable: boolean } | null>('check_app_update');
+                    if (!update) {
+                        notifications.create({type: 'info', title: t('PW Forge is up to date')});
+                        return;
+                    }
+                    const title = t('Update {value0} available', {value0: update.version});
+                    if (update.portable) {
+                        if (await confirm(t('Open GitHub Releases to download the portable ZIP?'), {title})) await invoke('open_project_releases');
+                        return;
+                    }
+                    const hasUnsavedChanges = () => {
+                        const {tabs, savedArchives} = store.getState().workspace;
+                        return tabs.some(tab => tab.dirty) || Object.values(savedArchives).some(Boolean);
+                    };
+                    if (hasUnsavedChanges()) {
+                        setError(t('Save your changes before installing an update.'));
+                        return;
+                    }
+                    if (await confirm(t('Install the update now? PW Forge will close.'), {title})) {
+                        if (hasUnsavedChanges()) {
+                            setError(t('Save your changes before installing an update.'));
+                            return;
+                        }
+                        setInstallingUpdate(true);
+                        await invoke('install_app_update', {version: update.version});
+                    }
+                } catch (error) {
+                    setError(String(error));
+                } finally {
+                    setInstallingUpdate(false);
+                    setBusy(false);
+                }
+            })();
+        },
+        help: () => setHelp(true),
+    };
+    return <Box className="forge-ide">
+        <IdeMenu actions={menuActions} busy={busy} dirty={!!activeTab?.dirty} hasTab={!!activeTab}
+                 kind={activeScope?.kind} scopeDirty={tabs.some(tab => tab.scope === activeScope?.id && tab.dirty)}
+                 archiveChanged={!!savedArchives[activeScope?.id ?? -1]}/>
+        <Dialog.Root open={installingUpdate} closeOnEscape={false} closeOnInteractOutside={false}>
+            <Portal><Dialog.Backdrop/><Dialog.Positioner><Dialog.Content>
+                <Dialog.Header><Dialog.Title>{t('Downloading update…')}</Dialog.Title></Dialog.Header>
+                <Dialog.Body><Progress.Root value={null} size="sm" colorPalette="teal"
+                                            aria-label={t('Downloading update…')}><Progress.Track><Progress.Range/></Progress.Track></Progress.Root></Dialog.Body>
+            </Dialog.Content></Dialog.Positioner></Portal>
+        </Dialog.Root>
+        <Dialog.Root open={!!projectSettings} onOpenChange={event => {
+            if (!event.open && !busy) setProjectSettings(null);
+        }}>
+            <Portal><Dialog.Backdrop/><Dialog.Positioner><Dialog.Content>
+                <Dialog.Header><Dialog.Title>{t('Project settings')}</Dialog.Title></Dialog.Header>
+                <Dialog.Body maxH="60vh" overflowY="auto">{projectSettings &&
+                    <Stack gap="4"><ClientVersionField value={projectSettings.version} disabled={busy}
+                                                       onChange={version => setProjectSettings({
+                                                           ...projectSettings,
+                                                           version,
+                                                           issues: undefined
+                                                       })}/>
+                        <Field.Root disabled={busy}>
+                            <Field.Label>{t('GShop format version')}</Field.Label>
+                            <NativeSelect.Root size="sm">
+                                <NativeSelect.Field value={projectSettings.gshopVersion ?? 'auto'} onChange={event => {
+                                    const value = event.target.value;
+                                    setProjectSettings({
+                                        ...projectSettings,
+                                        gshopVersion: value === 'auto' ? null : Number(value)
+                                    });
+                                }}>
+                                    <option value="auto">{t('Auto')}</option>
+                                    {Array.from({length: 8}, (_, version) => <option key={version}
+                                                                                     value={version}>{version}</option>)}
+                                </NativeSelect.Field>
+                                <NativeSelect.Indicator/>
+                            </NativeSelect.Root>
+                        </Field.Root>
+                        <ElementsProfileField value={projectSettings.elementsProfile} disabled={busy}
+                                              onChange={elementsProfile => setProjectSettings({
+                                                  ...projectSettings,
+                                                  elementsProfile
+                                              })}/>
+                    </Stack>}
+                    {!!projectSettings?.issues?.length && <Stack mt="4" gap="2">
+                        <Text fontWeight="semibold">{t('Interface compatibility check')}</Text>
+                        {projectSettings.issues.map(issue => <Box key={issue.path} borderWidth="1px" rounded="md" p="2">
+                            <Text overflowWrap="anywhere">{issue.path}</Text>
+                            <Text fontSize="sm"
+                                  color="fg.warning">{issue.error ? t('Could not check XML') + ' · ' + message(issue.error) : [issue.div ? 'DIV' : '', issue.mono ? 'mono' : ''].filter(Boolean).join(', ')}</Text>
+                        </Box>)}
+                    </Stack>}
+                </Dialog.Body>
+                <Dialog.Footer>
+                    <Button variant="outline" disabled={busy}
+                            onClick={() => setProjectSettings(null)}>{t('Close')}</Button>
+                    <Button colorPalette="teal" loading={busy} onClick={async () => {
+                        if (!projectSettings || busy) return;
+                        const {id, path, version, gshopVersion, elementsProfile} = projectSettings;
+                        const previousProfile = scopesRef.current.find(scope => scope.id === id)?.elementsProfile;
+                        const elementsChanged = previousProfile?.version !== elementsProfile?.version
+                            || previousProfile?.variant !== elementsProfile?.variant;
+                        if (elementsChanged && store.getState().workspace.tabs.some(tab => tab.scope === id && tab.kind === 'elements' && tab.dirty)) {
+                            setError(t('Save Elements changes before changing the schema.'));
+                            setProjectSettings(null);
+                            return;
+                        }
+                        if ((scopesRef.current.find(scope => scope.id === id)?.gshopVersion ?? null) !== gshopVersion
+                            && store.getState().workspace.tabs.some(tab => tab.scope === id && tab.kind === 'gshop' && tab.dirty)) {
+                            setError(t('Save GShop changes before changing the format version.'));
+                            setProjectSettings(null);
+                            return;
+                        }
+                        setBusy(true);
+                        try {
+                            const previous = scopesRef.current.find(scope => scope.id === id)?.clientVersion;
+                            if (version === '1.5.5' && previous !== '1.5.5' && !projectSettings.issues) {
+                                const issues = await invoke<{
+                                    path: string;
+                                    div: boolean;
+                                    mono: boolean;
+                                    error: string | null
+                                }[]>('ide_check_interface_compatibility', {
+                                    id, drafts: Object.fromEntries(xmlDrafts.current.get(id) ?? [])
+                                });
+                                if (issues.length) {
+                                    setProjectSettings({...projectSettings, issues});
+                                    return;
+                                }
+                            }
+                            await invoke('project_set_client_version', {
+                                manifest: path,
+                                clientVersion: version,
+                                gshopVersion,
+                                elementsProfile
+                            });
+                            const update = (scope: ResourceScope) => scope.id === id ? {
+                                ...scope,
+                                clientVersion: version,
+                                gshopVersion,
+                                elementsProfile
+                            } : scope;
+                            setScopes(scopes => scopes.map(update));
+                            scopesRef.current = scopesRef.current.map(update);
+                            setProjectSettings(null);
+                        } catch (error) {
+                            setError(String(error));
+                            setProjectSettings(null);
+                        } finally {
+                            setBusy(false);
+                        }
+                    }}>{t(projectSettings?.issues?.length ? 'Switch anyway' : 'Save')}</Button>
+                </Dialog.Footer>
+            </Dialog.Content></Dialog.Positioner></Portal>
+        </Dialog.Root>
+        <Dialog.Root open={!!buildInfo} closeOnInteractOutside={false} closeOnEscape={!buildInfo?.running}
+                     onOpenChange={event => {
+                         if (!event.open && !buildInfo?.running) setBuildInfo(null);
+                     }}>
+            <Portal><Dialog.Backdrop/><Dialog.Positioner><Dialog.Content>
+                <Dialog.Header><Dialog.Title>{t(buildInfo?.running ? 'Building changes…' : buildInfo?.error === 'Build cancelled' ? 'Build cancelled' : buildInfo?.error ? 'Build failed' : 'Build complete')}</Dialog.Title></Dialog.Header>
+                <Dialog.Body maxH="65vh" overflowY="auto"><Stack gap="3" role="status">
+                    <Text fontSize="sm" color="fg.muted" overflowWrap="anywhere">{buildInfo?.project}</Text>
+                    {buildInfo && <Text fontSize="sm"
+                                        color="fg.muted">{t('Elapsed time')}: {formatBuildTime(buildElapsed)}{buildInfo.running && <> · {t('Estimated time remaining')}: {buildEta === null ? t('Estimating…') : '≈ ' + formatBuildTime(buildEta)}</>}</Text>}
+                    {buildInfo?.running && <>
+                        <Text fontSize="sm">{t('Overall progress')}: {Math.floor(buildFraction * 100)}%</Text>
+                        <Progress.Root value={buildInfo.overallTotal ? buildInfo.overallDone ?? 0 : null}
+                                       max={buildInfo.overallTotal || 100} colorPalette="blue" size="sm"
+                                       aria-label={t('Overall progress')}><Progress.Track><Progress.Range/></Progress.Track></Progress.Root>
+                        {Object.entries(buildInfo.workers ?? {}).filter(([, worker]) => worker.completed < worker.total).sort(([a], [b]) => Number(a) - Number(b)).map(([id, worker]) =>
+                            <Stack key={id} gap="1" p="2" borderWidth="1px" rounded="md">
+                                <Text
+                                    fontSize="sm">{worker.archive} · {Math.floor(worker.completed / worker.total * 100)}%</Text>
+                                <Text fontSize="xs" color="fg.muted">{buildStage(worker.stage)}</Text>
+                                <Progress.Root value={worker.completed} max={worker.total} colorPalette="teal" size="sm"
+                                               aria-label={worker.archive}><Progress.Track><Progress.Range/></Progress.Track></Progress.Root>
+                            </Stack>)}
+                        {!Object.keys(buildInfo.workers ?? {}).length && <Text fontSize="sm">{t('Current file')}</Text>}
+                        {(!Object.keys(buildInfo.workers ?? {}).length || Object.values(buildInfo.workers ?? {}).every(worker => worker.completed >= worker.total)) &&
+                            <Text>{message(buildInfo.stage || 'Working…')}</Text>}
+                        <Progress.Root display={Object.keys(buildInfo.workers ?? {}).length ? 'none' : undefined}
+                                       value={buildInfo.total ? buildInfo.completed : null} max={buildInfo.total || 100}
+                                       colorPalette="teal" size="sm"
+                                       aria-label={t('Build changes')}><Progress.Track><Progress.Range/></Progress.Track></Progress.Root>
+                        {!Object.keys(buildInfo.workers ?? {}).length && !!buildInfo.total &&
+                            <Text fontSize="sm">{buildInfo.completed} / {buildInfo.total}</Text>}
+                    </>}
+                    {!!buildInfo?.log.length && <Box ref={buildLogRef} as="pre" onScroll={event => {
+                        const log = event.currentTarget;
+                        followBuildLog.current = log.scrollHeight - log.scrollTop - log.clientHeight <= 24;
+                    }} maxH="240px" overflow="auto" bg="bg.subtle" p="3" rounded="md" fontSize="xs"
+                                                     whiteSpace="pre-wrap"
+                                                     overflowWrap="anywhere">{buildInfo.log.join('\n')}</Box>}
+                    {buildInfo?.error && <Text color="fg.error">{message(buildInfo.error)}</Text>}
+                    {buildInfo?.directory && <>
+                        <Text overflowWrap="anywhere">{buildInfo.directory}</Text>
+                        <Text>{t('Archives')}: {buildInfo.archives?.length ?? 0} · {t('Files')}: {buildInfo.loose_files ?? 0}</Text>
+                        {buildInfo.archives?.map(archive => <Text key={archive} fontSize="sm">{archive}</Text>)}
+                        <Text fontWeight="medium">{t('Server files')}: {buildInfo.server_files?.length ?? 0}</Text>
+                        {buildInfo.server_files?.map(file => <Text key={file} fontSize="sm"
+                                                                   overflowWrap="anywhere">{file}</Text>)}
+                        {!buildInfo.server_files?.length &&
+                            <Text fontSize="sm" color="fg.muted">{t('No saved server changes in this build.')}</Text>}
+                        {buildInfo.client_files?.map(file => <Text key={file} fontSize="sm"
+                                                                   overflowWrap="anywhere">{file}</Text>)}
+                    </>}
+                </Stack></Dialog.Body>
+                <Dialog.Footer>
+                    {buildInfo?.running && <Button variant="outline" disabled={buildInfo.cancelling} onClick={() => {
+                        setBuildInfo(current => current ? {...current, cancelling: true} : current);
+                        void invoke('project_cancel_build').catch(error => setError(String(error)));
+                    }}>{t(buildInfo.cancelling ? 'Cancelling…' : 'Cancel build')}</Button>}
+                    {buildInfo?.directory && <Button colorPalette="teal" onClick={() => {
+                        void invoke('open_build_directory', {directory: buildInfo.directory}).catch(error => setBuildInfo(current => current ? {
+                            ...current,
+                            error: String(error)
+                        } : current));
+                    }}>{t('Open in Explorer')}</Button>}
+                    <Button variant="outline" disabled={buildInfo?.running}
+                            onClick={() => setBuildInfo(null)}>{t('Close')}</Button>
+                </Dialog.Footer>
+            </Dialog.Content></Dialog.Positioner></Portal>
+        </Dialog.Root>
+        <Dialog.Root open={help} onOpenChange={event => setHelp(event.open)}>
+            <Portal><Dialog.Backdrop/><Dialog.Positioner><Dialog.Content>
+                <Dialog.Header><Dialog.Title>PW Forge</Dialog.Title></Dialog.Header>
+                <Dialog.Body><Stack gap="3">
+                    <Text>{t("Perfect World client and server resource editor.")}</Text>
+                    <Text>{t("Work with PCK archives, edit resources, import server files, build changes and translate game texts in one workspace.")}</Text>
+                </Stack></Dialog.Body>
+                <Dialog.Footer position="relative" justifyContent="center">
+                    <Link href="https://github.com/LRPW/pw-forge" target="_blank" rel="noopener noreferrer"
+                          title="GitHub · LRPW/pw-forge" aria-label="GitHub · LRPW/pw-forge"
+                          onClick={event => {
+                              event.preventDefault();
+                              void invoke('open_project_github').catch(error => {
+                                  setHelp(false);
+                                  setError(String(error));
+                              });
+                          }}>
+                        <FaGithub size="24px"/>
+                    </Link>
+                    <Button position="absolute" right="6" size="sm" onClick={() => setHelp(false)}>{t("Close")}</Button>
+                </Dialog.Footer>
+            </Dialog.Content></Dialog.Positioner></Portal>
+        </Dialog.Root>
+        {error &&
+            <Alert.Root status="error" size="sm" role="alert"><Alert.Indicator/><Alert.Content>{message(error)}<Button
+                onClick={() => setError('')}>×</Button></Alert.Content></Alert.Root>}
         <main className="ide-main">
             <aside className="ide-sidebar" style={{width: sidebarWidth}}>
-                <input aria-label="Поиск файлов" placeholder="Поиск…" value={query}
-                       onChange={e => setQuery(e.target.value)}/>
+                <Field.Root width="auto"><Input aria-label={t("Find files")} placeholder={t("Searching…")} value={query}
+                                                onChange={e => setQuery(e.target.value)}/></Field.Root>
                 <ArchiveTree entries={treeEntries} query={query}
                              selected={selected !== undefined && selected >= 0 ? selected : undefined} busy={busy}
                              choose={i => {
@@ -546,322 +1028,102 @@ export function IdeApp() {
                                  if (entry) openEntry(entry.scope, entry.index);
                              }}/></aside>
             {picker && <ResourcePicker field={picker.field} entries={pickerEntries} busy={busy}
-                                       cancel={() => cancelResourcePick(picker.tab)} choose={i => {
-                const entry = pickerEntries[i];
-                if (!entry) return;
-                picker.choose(entry.name.replaceAll('/', '\\'));
-                cancelResourcePick(picker.tab);
-            }}/>}
-            <ColumnDivider label="Ширина дерева файлов"
+                                       cancel={() => cancelResourcePick(picker.tab)} choose={handleResourcePick}/>}
+            <ColumnDivider label={t("File tree width")}
                            onDelta={delta => setSidebarWidth(width => resizeWidth(width, delta, 220, Math.min(600, window.innerWidth - 420)))}/>
             <section className="ide-workbench">
-                <div className="ide-tabs" role="tablist" aria-label="Открытые файлы">{tabs.map(t => <div key={t.key}
-                                                                                                         className={`ide-tab${active === t.key ? ' active' : ''}`}
-                                                                                                         onMouseDown={event => {
-                                                                                                             if (event.button === 1) event.preventDefault();
-                                                                                                         }}
-                                                                                                         onAuxClick={event => {
-                                                                                                             if (event.button !== 1) return;
-                                                                                                             event.preventDefault();
-                                                                                                             void closeTab(t.key);
-                                                                                                         }}>
-                    <button role="tab" aria-selected={active === t.key} onClick={() => setActive(t.key)}
-                            title={t.title}>{t.title}{t.dirty ? ' ●' : ''}</button>
-                    <button aria-label={`Закрыть ${t.title}`} onClick={() => void closeTab(t.key)}>×</button>
-                </div>)}</div>
-                <div className="ide-editors">{tabs.map(tab => {
+                <Box className="ide-tabs" role="tablist" aria-label={t("Open files")}>{tabs.map(tabItem => <Box
+                    key={tabItem.key}
+                    className={`ide-tab${active === tabItem.key ? ' active' : ''}`}
+                    onMouseDown={event => {
+                        if (event.button === 1) event.preventDefault();
+                    }}
+                    onAuxClick={event => {
+                        if (event.button !== 1) return;
+                        event.preventDefault();
+                        void closeTab(tabItem.key);
+                    }}>
+                    <Button role="tab" aria-selected={active === tabItem.key} onClick={() => setActive(tabItem.key)}
+                            title={tabItem.title}>{tabItem.title}{tabItem.dirty ? ' ●' : ''}</Button>
+                    <Button aria-label={t("Close {value0}", {value0: tabItem.title})}
+                            onClick={() => void closeTab(tabItem.key)}>×</Button>
+                </Box>)}</Box>
+                <Box className="ide-editors">{tabs.map(tab => {
                     const scope = scopes.find(s => s.id === tab.scope);
-                    return <div className="ide-document" key={tab.key + "@" + (fileRevisions[tab.key] ?? 0)}
-                                style={{display: tab.key === active ? 'flex' : 'none'}}>{tab.kind === 'new' ?
-                        <NewProject onCreated={path => {
-                            void loadPath(path);
-                            setTabs(old => old.filter(t => t.key !== 'new-project'));
-                        }}/> : scope && tab.kind === 'locale' ?
-                            <LocaleEditor id={scope.id} active={tab.key === active} revision={exportRevision}
-                                          exporting={!!textExport} onExport={() => void exportTexts(scope)}
-                                          onApply={scope.kind === 'project' ? language => applyLocale(scope, language) : undefined}
-                                          onDirty={dirty => setDirty(tab.key, dirty)}/> : scope && tab.kind === 'source' ?
-                                <div className="ide-source">
-                                    <div>{scope.path}</div>
-                                    <input placeholder="Файл…" aria-label="Фильтр содержимого"
-                                           onChange={e => setQuery(e.target.value)}/>
-                                    <div className="ide-source-files">{scope.entries.slice(0, 300).map((e, i) => <button
-                                        key={i} onClick={() => openEntry(scope, i)}>{e.name}</button>)}</div>
-                                </div> : scope && tab.kind === 'task-npc' ?
-                                    <TaskNpcEditor openNpc={npcId => void openElementsRecord(scope, npcId, true)}
-                                                   id={scope.id} index={tab.index!} active={tab.key === active}
-                                                   onDirty={dirty => setDirty(tab.key, dirty)}
-                                                   onSaved={() => saved(scope, tab.index!)}/> : scope && tab.kind === 'tasks' ?
-                                        <TasksEditor openItem={itemId => void openElementsRecord(scope, itemId)}
-                                                     openNpc={npcId => void openElementsRecord(scope, npcId, true)}
-                                                     id={scope.id} index={tab.index!} active={tab.key === active}
-                                                     onDirty={dirty => setDirty(tab.key, dirty)}
-                                                     onSaved={() => saved(scope, tab.index!)}/> : scope && tab.kind === 'domain' ?
-                                            <DomainEditor id={scope.id} index={tab.index!}
-                                                          nations={/^domain2/i.test(tab.title)}
-                                                          active={tab.key === active}
-                                                          onDirty={dirty => setDirty(tab.key, dirty)}
-                                                          onSaved={() => saved(scope, tab.index!)}/> : scope && (tab.kind === 'elements' || tab.kind === 'gshop') ?
-                                                <ElementsTab scope={scope} tab={tab} active={tab.key === active}
-                                                             onDirty={setDirty} onSaved={() => saved(scope, tab.index!)}
-                                                             onOpen={() => void openFile()}
-                                                             readFieldImage={readFieldImage}
-                                                             openFieldResource={openFieldResource}
-                                                             openElementsRecord={openElementsRecord}
-                                                             onResourcePick={setResourcePick}
-                                                             onCancelResourcePick={cancelResourcePick}/> : scope ?
-                                                    <ResourceDocument scope={scope} tab={tab}
-                                                                      active={tab.key === active} onDirty={setDirty}
-                                                                      onSaved={() => saved(scope, tab.index!)}
-                                                                      onOpen={name => openResource(scope, name, scope.entries[tab.index ?? 0]?.name)}/> : null}</div>;
-                })}</div>
+                    return <Box className="ide-document" key={tab.key + "@" + (fileRevisions[tab.key] ?? 0)}
+                                style={{display: tab.key === active ? 'flex' : 'none'}}>
+                        <EditorTabContent active={restored && tab.key === active}>{tab.kind === 'new' ?
+                            <NewProject onCreated={path => {
+                                void loadPath(path);
+                                tabClosed('new-project');
+                            }}/> : scope && tab.kind === 'locale' ?
+                                <LocaleEditor id={scope.id} active={tab.key === active} revision={exportRevision}
+                                              exporting={!!textExport} onExport={() => void exportTexts(scope)}
+                                              onApply={scope.kind === 'project' ? language => applyLocale(scope, language) : undefined}
+                                              onDirty={dirty => setDirty(tab.key, dirty)}/> : scope && tab.kind === 'source' ?
+                                    <Box className="ide-source">
+                                        <Box>{scope.path}</Box>
+                                        <Field.Root width="auto"><Input placeholder={t("File…")}
+                                                                        aria-label={t("Content filter")}
+                                                                        onChange={e => setQuery(e.target.value)}/></Field.Root>
+                                        <Box className="ide-source-files">{scope.entries.slice(0, 300).map((e, i) =>
+                                            <Button
+                                                key={i} onClick={() => openEntry(scope, i)}>{e.name}</Button>)}</Box>
+                                    </Box> : scope && tab.kind === 'task-npc' ?
+                                        <TaskNpcEditor openNpc={npcId => void openElementsRecord(scope, npcId, true)}
+                                                       id={scope.id} index={tab.index!} active={tab.key === active}
+                                                       onDirty={dirty => setDirty(tab.key, dirty)}
+                                                       onSaved={() => saved(scope, tab.index!)}/> : scope && tab.kind === 'tasks' ?
+                                            <TasksEditor openItem={itemId => void openElementsRecord(scope, itemId)}
+                                                         openNpc={npcId => void openElementsRecord(scope, npcId, true)}
+                                                         id={scope.id} index={tab.index!} active={tab.key === active}
+                                                         onDirty={dirty => setDirty(tab.key, dirty)}
+                                                         onSaved={() => saved(scope, tab.index!)}/> : scope && tab.kind === 'server-records' ?
+                                                <ServerRecordsEditor active={tab.key === active} id={scope.id}
+                                                                     index={tab.index!}
+                                                                     format={structuredFormat(tab.title)!}
+                                                                     onDirty={dirty => setDirty(tab.key, dirty)}
+                                                                     onSaved={() => saved(scope, tab.index!)}/> : scope && tab.kind === 'aipolicy' ?
+                                                    <AiPolicyEditor active={tab.key === active} id={scope.id}
+                                                                    index={tab.index!}
+                                                                    onDirty={dirty => setDirty(tab.key, dirty)}
+                                                                    onSaved={() => saved(scope, tab.index!)}/> : scope && tab.kind === 'domain' ?
+                                                        <DomainEditor id={scope.id} index={tab.index!}
+                                                                      filename={tab.title}
+                                                                      active={tab.key === active}
+                                                                      onDirty={dirty => setDirty(tab.key, dirty)}
+                                                                      onSaved={() => saved(scope, tab.index!)}/> : scope && (tab.kind === 'elements' || tab.kind === 'gshop') ?
+                                                            <ElementsTab scope={scope} tab={tab}
+                                                                         active={tab.key === active}
+                                                                         onDirty={setDirty}
+                                                                         onSaved={() => saved(scope, tab.index!)}
+                                                                         onOpen={() => void openFile()}
+                                                                         readFieldImage={readFieldImage}
+                                                                         openFieldResource={openFieldResource}
+                                                                         openElementsRecord={openElementsRecord}
+                                                                         onResourcePick={setResourcePick}
+                                                                         onCancelResourcePick={cancelResourcePick}/> : scope ?
+                                                                <ResourceDocument scope={scope} tab={tab}
+                                                                                  onXmlDraft={trackXmlDraft}
+                                                                                  active={tab.key === active}
+                                                                                  onDirty={setDirty}
+                                                                                  onSaved={() => saved(scope, tab.index!)}
+                                                                                  onOpen={name => openResource(scope, name, scope.entries[tab.index ?? 0]?.name)}/> : null}
+                        </EditorTabContent>
+                    </Box>;
+                })}</Box>
             </section>
         </main>
-        <footer className="ide-status" role="status">{opening ? <div className='ide-open-progress'>
-            <span>Открытие {opening}{openProgress?.stage ? ' · ' + openProgress.stage : ''}</span><Progress.Root
-            size="xs" colorPalette="teal" aria-label="Загрузка файла"
+        <footer className="ide-status" role="status">{opening ? <Box className='ide-open-progress'>
+            <span>{t("Opening ")}{opening}{openProgress?.stage ? ' · ' + message(openProgress.stage) : ''}</span><Progress.Root
+            size="xs" colorPalette="teal" aria-label={t("Loading file")}
             value={openProgress?.total ? openProgress.completed : null}
             max={openProgress?.total || 100}><Progress.Track><Progress.Range/></Progress.Track></Progress.Root>
-        </div> : textExport ? <div className='ide-open-progress'>
-            <span>{textExport.operation}{textExport.stage ? ' · ' + textExport.stage : ''}</span><Progress.Root
+        </Box> : textExport ? <Box className='ide-open-progress'>
+            <span>{textExport.operation}{textExport.stage ? ' · ' + message(textExport.stage) : ''}</span><Progress.Root
             size='xs' colorPalette='teal' aria-label={textExport.operation}
             value={textExport.total ? textExport.completed : null}
             max={textExport.total || 100}><Progress.Track><Progress.Range/></Progress.Track></Progress.Root>
-        </div> : busy ? 'Выполняется…' : status}</footer>
-    </div>;
-}
-
-function ElementsTab({
-                         scope,
-                         tab,
-                         active,
-                         onDirty,
-                         onSaved,
-                         onOpen,
-                         readFieldImage,
-                         openFieldResource,
-                         openElementsRecord,
-                         onResourcePick,
-                         onCancelResourcePick
-                     }: {
-    scope: ResourceScope;
-    tab: Tab;
-    active: boolean;
-    onDirty: (key: string, dirty: boolean) => void;
-    onSaved: () => void;
-    onOpen: () => void;
-    readFieldImage: (scope: ResourceScope, path: string) => Promise<number[]>;
-    openFieldResource: (scope: ResourceScope, path: string) => void;
-    openElementsRecord: (scope: ResourceScope, id: number, npc?: boolean) => Promise<void>;
-    onResourcePick: (pick: ResourcePick) => void;
-    onCancelResourcePick: (tab: string) => void
-}) {
-    const request = useMemo(() => ({id: scope.id, index: tab.index!}), [scope.id, tab.index]);
-    const dirty = useCallback((value: boolean) => onDirty(tab.key, value), [onDirty, tab.key]);
-    const readImage = useCallback((path: string) => readFieldImage(scope, path), [scope, readFieldImage]);
-    const cancelPick = useCallback(() => onCancelResourcePick(tab.key), [onCancelResourcePick, tab.key]);
-    return <ElementsEditor itemJump={tab.itemJump} openItem={(id, npc) => void openElementsRecord(scope, id, npc)}
-                           openResource={path => openFieldResource(scope, path)} readImage={readImage}
-                           cancelResourcePick={cancelPick} pickResource={(field, imageOnly, choose) => onResourcePick({
-        tab: tab.key,
-        scope,
-        field,
-        imageOnly,
-        choose
-    })} embedded shop={tab.kind === 'gshop'} visible={active} onOpen={onOpen} onBack={() => {
-    }} requestedIde={request} onDirty={dirty} onSaved={onSaved}/>;
-}
-
-function ResourceDocument({scope, tab, active, onDirty, onSaved, onOpen}: {
-    scope: ResourceScope;
-    tab: Tab;
-    active: boolean;
-    onDirty: (key: string, dirty: boolean) => void;
-    onSaved: () => void;
-    onOpen: (name: string) => void
-}) {
-    const name = tab.resource ?? scope.entries[tab.index!]?.name ?? tab.title;
-    const [bytes, setBytes] = useState<number[]>([]), [text, setText] = useState(''), [saved, setSaved] = useState(''), [encoding, setEncoding] = useState('utf-8'), [loading, setLoading] = useState(true), [error, setError] = useState('');
-    const isNative = /\.(gfx|mox|ecm|smd|ski|bon)$/i.test(name), isXml = /\.xml$/i.test(name),
-        isMedia = !!mediaType(name);
-    const isText = /\.(txt|xml|ini|cfg|lua|json|csv|log|fx|vsh|psh|hlsl|html|css|js|md|properties)$/i.test(name);
-    const [mode, setMode] = useState(isNative || isXml || isMedia ? 'preview' : isText ? 'text' : 'hex');
-    const editor = useRef<TextEditorHandle>(null);
-    const appliedJump = useRef<IdeHit['hit'] | undefined>(undefined);
-    useEffect(() => {
-        if (!tab.jump || !active || loading) return;
-        if (text === saved && (encoding !== tab.jump.encoding || (!isText && !text))) {
-            const value = new TextDecoder(tab.jump.encoding, {ignoreBOM: true}).decode(new Uint8Array(bytes));
-            setEncoding(tab.jump.encoding);
-            setText(value);
-            setSaved(value);
-        }
-        setMode('text');
-    }, [tab.jump, active, loading]);
-    useEffect(() => {
-        const jump = tab.jump;
-        if (!jump || appliedJump.current === jump || !active || loading || mode !== 'text' || !editor.current) return;
-        if (text === saved && (encoding !== jump.encoding || (!isText && !text && bytes.length > 0))) return;
-        editor.current.reveal(jump.start, jump.end);
-        appliedJump.current = jump;
-    }, [tab.jump, active, loading, mode, text, saved, encoding, isText, bytes.length]);
-    const dirty = text !== saved;
-    const onOpenRef = useRef(onOpen);
-    onOpenRef.current = onOpen;
-    const boundInvoke = useMemo(() => resourceInvoke(scope, n => onOpenRef.current(n)), [scope.id]);
-    const context = useMemo(() => ({invoke: boundInvoke, active}), [boundInvoke, active]);
-    useEffect(() => {
-        let alive = true;
-        setLoading(true);
-        const p = tab.resource ? invoke<number[]>('ide_resource', {
-            id: scope.id,
-            name: tab.resource
-        }) : invoke<number[]>('ide_read', {id: scope.id, index: tab.index});
-        void p.then(data => {
-            if (!alive) return;
-            const d = isText ? decode(data) : {encoding: "gbk", text: ""};
-            setBytes(data);
-            setEncoding(d.encoding);
-            setSaved(d.text);
-            setText(d.text);
-            setLoading(false);
-        }).catch(e => {
-            if (alive) {
-                setError(String(e));
-                setLoading(false);
-            }
-        });
-        return () => {
-            alive = false;
-        };
-    }, [scope.id, tab.index, tab.resource]);
-    useEffect(() => onDirty(tab.key, dirty), [dirty, onDirty, tab.key]);
-
-    async function saveFile() {
-        if (tab.index === undefined) return;
-        setLoading(true);
-        try {
-            await invoke('ide_save', {id: scope.id, index: tab.index, text, encoding, original: bytes});
-            const b = await invoke<number[]>('ide_read', {id: scope.id, index: tab.index});
-            setBytes(b);
-            setSaved(text);
-            onSaved();
-        } catch (e) {
-            setError(String(e));
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    useEffect(() => {
-        if (!active) return;
-        const handler = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
-                e.preventDefault();
-                if (dirty && !loading) void saveFile();
-            }
-        };
-        window.addEventListener('keydown', handler);
-        return () => window.removeEventListener('keydown', handler);
-    });
-    const hex = useMemo(() => Array.from({length: Math.ceil(Math.min(bytes.length, 65536) / 16)}, (_, i) => `${(i * 16).toString(16).padStart(8, '0')}  ${bytes.slice(i * 16, i * 16 + 16).map(b => b.toString(16).padStart(2, '0')).join(' ')}`).join('\n'), [bytes]);
-    return <ResourceContext.Provider value={context}>
-        <div className="ide-resource">
-            <div className="ide-document-toolbar"><span title={name}>{name}</span>{(isNative || isXml || isMedia) &&
-                <button onClick={() => setMode('preview')}>Предпросмотр</button>}
-                <button onClick={() => {
-                    if (!isText && !text) {
-                        const d = decode(bytes);
-                        setText(d.text);
-                        setSaved(d.text);
-                        setEncoding(d.encoding);
-                    }
-                    setMode('text');
-                }}>Текст
-                </button>
-                <button onClick={() => setMode('hex')}>HEX</button>
-                <select value={encoding} onChange={e => {
-                    if (dirty) return;
-                    setEncoding(e.target.value);
-                    const s = new TextDecoder(e.target.value, {ignoreBOM: true}).decode(new Uint8Array(bytes));
-                    setText(s);
-                    setSaved(s);
-                }}>
-                    <option value="utf-8">UTF-8</option>
-                    <option value="gbk">GBK</option>
-                    <option value="utf-16le">UTF-16 LE</option>
-                    <option value="utf-16be">UTF-16 BE</option>
-                </select>
-                <button disabled={loading || !dirty || tab.index === undefined}
-                        onClick={() => void saveFile()}>Сохранить
-                </button>
-            </div>
-            {error && <div className="ide-error">{error}</div>}{loading && <div className="ide-loading">…</div>}
-            <div className="ide-document-body">{mode === 'preview' && isNative ?
-                <NativeGfxPreview file={name}/> : mode === 'preview' && isXml ?
-                    <InterfaceEditor text={text} fileName={name} entries={scope.entries} onChange={setText}
-                                     disabled={loading || !active}
-                                     onOpenDialog={onOpen}/> : mode === 'preview' && isMedia ?
-                        <MediaPreview name={name} bytes={bytes}/> : mode === 'hex' ?
-                            <pre className="ide-hex">{hex}</pre> :
-                            <TextEditor ref={editor} value={text} fileName={name} readOnly={loading || !active}
-                                        onChange={setText}/>}</div>
-        </div>
-    </ResourceContext.Provider>;
-}
-
-function NewProject({onCreated}: { onCreated: (path: string) => void }) {
-    const [source, setSource] = useState(''), [parent, setParent] = useState(''), [name, setName] = useState('Project'), [archives, setArchives] = useState<{
-        path: string;
-        size: number
-    }[]>([]), [selected, setSelected] = useState<string[]>([]), [busy, setBusy] = useState(false), [error, setError] = useState('');
-    useUnsavedGuard('Импорт', busy);
-
-    async function chooseSource() {
-        const p = await open({directory: true, multiple: false});
-        if (typeof p !== 'string') return;
-        setBusy(true);
-        try {
-            setArchives(await invoke('project_scan', {source: p}));
-            setSource(p);
-            setSelected([]);
-        } catch (e) {
-            setError(String(e));
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    async function create() {
-        setBusy(true);
-        try {
-            const p = await invoke<{ manifest: string }>('project_create', {source, parent, name, archives: selected});
-            onCreated(p.manifest);
-        } catch (e) {
-            setError(String(e));
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    return <div className="ide-new-project"><label>Название<input disabled={busy} value={name}
-                                                                  onChange={e => setName(e.target.value)}/></label>
-        <button disabled={busy} onClick={() => void chooseSource()}>Клиент…</button>
-        <div>{source}</div>
-        <button disabled={busy} onClick={() => void (async () => {
-            const p = await open({directory: true});
-            if (typeof p === 'string') setParent(p);
-        })()}>Каталог проекта…
-        </button>
-        <div>{parent}</div>
-        <div>
-            <button disabled={busy} onClick={() => setSelected(archives.map(a => a.path))}>Выбрать все</button>
-            <button disabled={busy} onClick={() => setSelected([])}>Снять выбор</button>
-        </div>
-        <div className="ide-archive-selection">{archives.map(a => <div className="ide-archive-option" key={a.path}>
-            <EditorSwitch label={a.path} showLabel disabled={busy} checked={selected.includes(a.path)}
-                          change={checked => setSelected(v => checked ? [...v, a.path] : v.filter(p => p !== a.path))}/><small>{(a.size / 1024 / 1024).toFixed(0)} MiB</small>
-        </div>)}</div>
-        <button disabled={busy || !source || !parent || !name.trim()} onClick={() => void create()}>Создать</button>
-        {error && <div className="ide-error">{error}</div>}</div>;
+        </Box> : busy ? t("Working…") : status}</footer>
+    </Box>;
 }

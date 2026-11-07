@@ -10,7 +10,7 @@
     align-items: center;
     gap: 8px;
     padding: 8px;
-    border-bottom: 1px solid #253044;
+    border-bottom: 1px solid var(--chakra-colors-border);
 }
 
 .domain-workspace {
@@ -43,17 +43,17 @@
 }
 
 .domain-workspace nav code {
-    color: #98afc3;
+    color: var(--chakra-colors-fg-muted);
     flex: none;
 }
 
 .domain-workspace nav button.selected {
-    background: #17473f;
-    border-color: #63e2c5;
+    background: var(--chakra-colors-teal-subtle);
+    border-color: var(--chakra-colors-teal-fg);
 }
 
 .domain-workspace nav button.neighbour {
-    border-color: #ba9657;
+    border-color: var(--chakra-colors-orange-fg);
 }
 
 .domain-details {
@@ -70,7 +70,7 @@
     flex: 1 1 0;
     width: 100%;
     min-height: 100px;
-    background: #101924;
+    background: var(--chakra-colors-bg);
 }
 
 .domain-region {
@@ -78,37 +78,37 @@
 }
 
 .domain-fill {
-    fill: #2f4763;
+    fill: var(--chakra-colors-blue-subtle);
     fill-rule: evenodd;
 }
 
 .domain-outline {
     fill: none;
-    stroke: #8194a9;
+    stroke: var(--chakra-colors-fg-muted);
     stroke-width: 1;
     vector-effect: non-scaling-stroke;
     pointer-events: none;
 }
 
 .domain-region:hover .domain-fill {
-    fill: #466687;
+    fill: var(--chakra-colors-blue-muted);
 }
 
 .domain-region.neighbour .domain-fill {
-    fill: #8d6d37;
+    fill: var(--chakra-colors-orange-subtle);
 }
 
 .domain-region.selected .domain-fill {
-    fill: #226d60;
+    fill: var(--chakra-colors-teal-muted);
 }
 
 .domain-region.selected .domain-outline {
-    stroke: #63e2c5;
+    stroke: var(--chakra-colors-teal-fg);
     stroke-width: 2;
 }
 
 .domain-center {
-    fill: #d5fff4;
+    fill: var(--chakra-colors-teal-fg);
     pointer-events: none;
 }
 
@@ -123,7 +123,7 @@
     padding: 10px;
 }
 
-.domain-properties label {
+.domain-properties [data-scope="field"][data-part="root"] {
     display: grid;
     gap: 4px;
     min-width: 0;
@@ -139,9 +139,9 @@
 }
 
 .domain-properties textarea {
-    background: #101b29;
+    background: var(--chakra-colors-bg);
     color: inherit;
-    border: 1px solid #34465e;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 4px;
     resize: vertical;
 }

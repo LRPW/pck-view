@@ -22,6 +22,18 @@ struct List {
 }
 #[path = "gshop.rs"]
 mod gshop;
+#[path = "elements_catalog.rs"]
+mod elements_catalog;
+pub(super) use elements_catalog::ElementsProfile;
+
+pub(super) fn validate_elements_profile(profile: &ElementsProfile) -> R<()> {
+    elements_catalog::validate(profile)
+}
+
+#[tauri::command]
+pub fn elements_schema_profiles() -> R<Vec<elements_catalog::ProfileOption>> {
+    elements_catalog::options()
+}
 struct Document {
     ide: Option<(u64, usize)>,
     project: Option<(String, String)>,
@@ -31,6 +43,7 @@ struct Document {
     encrypted: bool,
     lists: Vec<List>,
     talks_offset: Option<usize>,
+    gshop_version: Option<u8>,
     dirty: bool,
 }
 #[derive(Default)]
@@ -47,16 +60,53 @@ fn crypt(b: &mut [u8]) {
     }
 }
 fn take<'a>(b: &'a [u8], pos: &mut usize, n: usize) -> R<&'a [u8]> {
-    let end = pos.checked_add(n).ok_or("Переполнение размера")?;
+    let end = pos.checked_add(n).ok_or("Size overflow")?;
     let value = b
         .get(*pos..end)
-        .ok_or("Файл оборван или структура не соответствует версии клиента")?;
+        .ok_or("File is truncated or its structure does not match the client version")?;
     *pos = end;
     Ok(value)
 }
 fn number(b: &[u8], p: &mut usize) -> R<usize> {
     Ok(u32::from_le_bytes(take(b, p, 4)?.try_into().unwrap()) as usize)
 }
+fn skip_dialogues(bytes: &[u8], position: &mut usize) -> R<()> {
+    let count = number(bytes, position)?;
+    for _ in 0..count {
+        take(bytes, position, 132)?;
+        let windows = number(bytes, position)?;
+        for _ in 0..windows {
+            take(bytes, position, 8)?;
+            let chars = number(bytes, position)?;
+            take(bytes, position, chars.checked_mul(2).ok_or("Dialogue size")?)?;
+            let options = number(bytes, position)?;
+            take(bytes, position, options.checked_mul(136).ok_or("Option size")?)?;
+        }
+    }
+    Ok(())
+}
+
+fn parse_elements(bytes: &[u8], selected: Option<&ElementsProfile>) -> R<(Vec<List>, Option<usize>)> {
+    let header = bytes.get(..4).ok_or("Missing elements.data header")?;
+    let version = u16::from_le_bytes(header[..2].try_into().unwrap());
+    if let Some(selected) = selected {
+        if version != selected.version {
+            return Err(format!("Expected elements.data version {}, found {version}", selected.version));
+        }
+        if elements_catalog::is_native(selected) {
+            return parse(bytes, 4).or_else(|_| parse(bytes, 8));
+        }
+        return elements_catalog::parse_selected(bytes, selected);
+    }
+    if header == 0x30000091u32.to_le_bytes() {
+        // The bundled project format also supports an extended timestamp.
+        if let Ok(document) = parse(bytes, 4).or_else(|_| parse(bytes, 8)) {
+            return Ok(document);
+        }
+    }
+    elements_catalog::parse(bytes, version)
+}
+
 fn parse(bytes: &[u8], time: usize) -> R<(Vec<List>, Option<usize>)> {
     let schemas: Vec<Schema> =
         serde_json::from_str(include_str!("elements-schema.json")).map_err(|e| e.to_string())?;
@@ -76,29 +126,14 @@ fn parse(bytes: &[u8], time: usize) -> R<(Vec<List>, Option<usize>)> {
         }
         if schema.name == "FACE_TEXTURE_ESSENCE" {
             talks_offset = Some(p);
-            let n = number(bytes, &mut p)?;
-            for _ in 0..n {
-                take(bytes, &mut p, 132)?;
-                let windows = number(bytes, &mut p)?;
-                for _ in 0..windows {
-                    take(bytes, &mut p, 8)?;
-                    let chars = number(bytes, &mut p)?;
-                    take(bytes, &mut p, chars.checked_mul(2).ok_or("Размер диалога")?)?;
-                    let options = number(bytes, &mut p)?;
-                    take(
-                        bytes,
-                        &mut p,
-                        options.checked_mul(136).ok_or("Размер опций")?,
-                    )?;
-                }
-            }
+            skip_dialogues(bytes, &mut p)?;
         }
         let count = number(bytes, &mut p)?;
         let offset = p;
         take(
             bytes,
             &mut p,
-            count.checked_mul(schema.size).ok_or("Размер списка")?,
+            count.checked_mul(schema.size).ok_or("List size")?,
         )?;
         lists.push(List {
             schema,
@@ -108,7 +143,7 @@ fn parse(bytes: &[u8], time: usize) -> R<(Vec<List>, Option<usize>)> {
     }
     if p != bytes.len() {
         return Err(format!(
-            "После последнего списка осталось {} байт",
+            "{} bytes remain after the last list",
             bytes.len().saturating_sub(p)
         ));
     }
@@ -120,9 +155,12 @@ impl Document {
         Self::from_bytes(path, original)
     }
     fn from_bytes(path: PathBuf, original: Vec<u8>) -> R<Self> {
+        Self::from_bytes_with_version(path, original, None, None)
+    }
+    fn from_bytes_with_version(path: PathBuf, original: Vec<u8>, requested: Option<u8>, elements_profile: Option<&ElementsProfile>) -> R<Self> {
         let mut bytes = original.clone();
         if let Some(shop) = gshop::filename(&path) {
-            let lists = gshop::parse(&bytes, shop)?;
+            let (lists, version) = gshop::parse_version(&bytes, shop, requested)?;
             return Ok(Self {
                 ide: None,
                 project: None,
@@ -132,20 +170,18 @@ impl Document {
                 encrypted: false,
                 lists,
                 talks_offset: None,
+                gshop_version: Some(version),
                 dirty: false,
             });
         }
-        let version = 0x30000091u32.to_le_bytes();
-        let encrypted = !bytes.starts_with(&version);
-        if encrypted {
-            crypt(&mut bytes);
-        }
-        if !bytes.starts_with(&version) {
-            return Err(
-                "Поддерживается elements.data версии 0x30000091 из исходников этого клиента".into(),
-            );
-        }
-        let (lists,talks_offset) = parse(&bytes, 4).or_else(|_| parse(&bytes, 8))?;
+        let (lists, talks_offset, encrypted) = match parse_elements(&bytes, elements_profile) {
+            Ok((lists, talks_offset)) => (lists, talks_offset, false),
+            Err(plain_error) => {
+                crypt(&mut bytes);
+                let (lists, talks_offset) = parse_elements(&bytes, elements_profile).map_err(|_| plain_error)?;
+                (lists, talks_offset, true)
+            }
+        };
         Ok(Self {
             ide: None,
             project: None,
@@ -155,6 +191,7 @@ impl Document {
             encrypted,
             lists,
             talks_offset,
+            gshop_version: None,
             dirty: false,
         })
     }
@@ -172,6 +209,8 @@ pub struct Summary {
     path: String,
     encrypted: bool,
     lists: Vec<(String, usize)>,
+    elements_version: Option<u16>,
+    gshop_version: Option<u8>,
 }
 #[tauri::command]
 pub fn elements_open(path: String, state: tauri::State<'_, Elements>) -> R<Summary> {
@@ -181,6 +220,8 @@ pub fn elements_open(path: String, state: tauri::State<'_, Elements>) -> R<Summa
         id,
         path: doc.path.to_string_lossy().into(),
         encrypted: doc.encrypted,
+        gshop_version: doc.gshop_version,
+        elements_version: doc.gshop_version.is_none().then(|| u16::from_le_bytes(doc.bytes[..2].try_into().unwrap())),
         lists: doc
             .lists
             .iter()
@@ -196,13 +237,21 @@ pub fn elements_open_project(
     path: String,
     state: tauri::State<'_, Elements>,
 ) -> R<Summary> {
-    let mut doc = Document::open(super::project::materialize(&manifest, &path)?)?;
+    let file = super::project::materialize(&manifest, &path)?;
+    let bytes = std::fs::read(&file).map_err(|e| e.to_string())?;
+    let (gshop_version, elements_profile) = super::project::data_profiles(&manifest)?;
+    let mut doc = Document::from_bytes_with_version(file, bytes, gshop_version, elements_profile.as_ref())?;
+    if let Some(version) = doc.gshop_version {
+        super::project::remember_gshop_version(&manifest, &path, version)?;
+    }
     doc.project = Some((manifest, path));
     let id = state.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let summary = Summary {
         id,
         path: doc.path.to_string_lossy().into(),
         encrypted: doc.encrypted,
+        gshop_version: doc.gshop_version,
+        elements_version: doc.gshop_version.is_none().then(|| u16::from_le_bytes(doc.bytes[..2].try_into().unwrap())),
         lists: doc
             .lists
             .iter()
@@ -250,6 +299,7 @@ fn value(field: &Field, data: &[u8]) -> String {
     }
     data.chunks_exact(field.unit)
         .map(|c| match field.kind.as_str() {
+            "u8" => c[0].to_string(),
             "u32" => u32::from_le_bytes(c.try_into().unwrap()).to_string(),
             "i32" => i32::from_le_bytes(c.try_into().unwrap()).to_string(),
             "f32" => f32::from_le_bytes(c.try_into().unwrap()).to_string(),
@@ -267,10 +317,11 @@ fn value(field: &Field, data: &[u8]) -> String {
 pub(super) fn export_texts(
     name: &str,
     bytes: Vec<u8>,
+    profile: Option<&ElementsProfile>,
     emit: &mut dyn FnMut(String, &str) -> R<()>,
 ) -> R<()> {
     let shop = gshop::filename(std::path::Path::new(name)).is_some();
-    let doc = Document::from_bytes(name.into(), bytes)?;
+    let doc = Document::from_bytes_with_version(name.into(), bytes, None, profile)?;
     if let Some(offset) = doc.talks_offset {
         super::tasks::export_npc_talks(&doc.bytes[offset..],emit)?;
     }
@@ -342,8 +393,8 @@ pub fn elements_rows(
     state: tauri::State<'_, Elements>,
 ) -> R<Rows> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
-    let doc = guard.get(&document).ok_or("Откройте elements.data")?;
-    let l = doc.lists.get(list).ok_or("Нет списка")?;
+    let doc = guard.get(&document).ok_or("Open elements.data")?;
+    let l = doc.lists.get(list).ok_or("No list")?;
     let name = l.schema.fields.iter().find(|f| f.name == "name");
     let item_id = l.schema.fields.iter().find(|f| f.name == "item_id");
     let filters = [("main_type", main_type), ("sub_type", sub_type)]
@@ -395,9 +446,9 @@ pub struct ShopCategory {
 #[tauri::command]
 pub fn gshop_categories(document: u64, state: tauri::State<'_, Elements>) -> R<Vec<ShopCategory>> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
-    let doc = guard.get(&document).ok_or("Нет файла")?;
-    if doc.lists.len() != 17 || doc.lists[0].schema.name != "Товары" {
-        return Err("Откройте gshop.data".into());
+    let doc = guard.get(&document).ok_or("No file")?;
+    if doc.lists.len() != 17 || doc.lists[0].schema.name != "Products" {
+        return Err("Open gshop.data".into());
     }
     let read_name = |list: &List, index: usize| {
         let start = list.offset + index * list.schema.size;
@@ -429,7 +480,7 @@ pub async fn gshop_inventory_atlas(id: u64, ide: tauri::State<'_, super::ide::Id
         let mut dimension = || {
             lines.next().and_then(|line| line.trim().parse::<usize>().ok())
                 .filter(|&value| value > 0 && value <= 16384)
-                .ok_or("Некорректный размер атласа")
+                .ok_or("Invalid atlas size")
         };
         let width = dimension()?;
         let height = dimension()?;
@@ -472,7 +523,7 @@ pub fn elements_find_item(
     state: tauri::State<'_, Elements>,
 ) -> R<Option<(usize, usize)>> {
     let guard = state.0.lock().map_err(|error| error.to_string())?;
-    let doc = guard.get(&document).ok_or("Нет файла")?;
+    let doc = guard.get(&document).ok_or("No file")?;
     let mut fallback = None;
     let npc = npc.unwrap_or(false);
     for (list_index, list) in doc.lists.iter().enumerate() {
@@ -514,10 +565,13 @@ pub fn elements_record(
     state: tauri::State<'_, Elements>,
 ) -> R<Record> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
-    let doc = guard.get(&document).ok_or("Нет файла")?;
-    let l = doc.lists.get(list).ok_or("Нет списка")?;
+    let doc = guard.get(&document).ok_or("No file")?;
+    record(doc, list, index)
+}
+fn record(doc: &Document, list: usize, index: usize) -> R<Record> {
+    let l = doc.lists.get(list).ok_or("No list")?;
     if index >= l.count {
-        return Err("Нет записи".into());
+        return Err("No record".into());
     }
     let start = l.offset + index * l.schema.size;
     Ok(Record {
@@ -531,12 +585,12 @@ pub fn elements_record(
     })
 }
 fn encode(f: &Field, input: &str) -> R<Vec<u8>> {
-    let error = || format!("Неверное значение поля {} ({})", f.name, f.kind);
+    let error = || format!("Invalid field value {} ({})", f.name, f.kind);
     if f.kind == "utf16" {
         let units: Vec<u16> = input.encode_utf16().collect();
         if units.len() * 2 >= f.size {
             return Err(format!(
-                "{}: максимум {} символов UTF-16",
+                "{}: maximum {} UTF-16 code units",
                 f.name,
                 f.size / 2 - 1
             ));
@@ -549,7 +603,7 @@ fn encode(f: &Field, input: &str) -> R<Vec<u8>> {
         let (b, _, errors) = encoding_rs::GBK.encode(input);
         if errors || b.len() >= f.size {
             return Err(format!(
-                "{}: строка не помещается или не представима в GBK",
+                "{}: string does not fit or cannot be represented in GBK",
                 f.name
             ));
         }
@@ -566,6 +620,7 @@ fn encode(f: &Field, input: &str) -> R<Vec<u8>> {
             };
         }
         match f.kind.as_str() {
+            "u8" => num!(u8),
             "u32" => num!(u32),
             "i32" => num!(i32),
             "u64" => num!(u64),
@@ -591,7 +646,7 @@ fn encode(f: &Field, input: &str) -> R<Vec<u8>> {
     }
     if b.len() != f.size {
         return Err(format!(
-            "{}: требуется {} значений через запятую",
+            "{}: expected {} comma-separated values",
             f.name,
             f.size / f.unit
         ));
@@ -607,14 +662,17 @@ pub fn elements_update(
     state: tauri::State<'_, Elements>,
 ) -> R<()> {
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
-    let doc = guard.get_mut(&document).ok_or("Нет файла")?;
-    let l = doc.lists.get(list).ok_or("Нет списка")?;
+    let doc = guard.get_mut(&document).ok_or("No file")?;
+    update(doc, list, index, changes)
+}
+fn update(doc: &mut Document, list: usize, index: usize, changes: Vec<(usize, String)>) -> R<()> {
+    let l = doc.lists.get(list).ok_or("No list")?;
     if index >= l.count {
-        return Err("Нет записи".into());
+        return Err("No record".into());
     }
     let mut edits = Vec::new();
     for (field, input) in changes {
-        let f = l.schema.fields.get(field).ok_or("Нет поля")?;
+        let f = l.schema.fields.get(field).ok_or("No field")?;
         edits.push((
             l.offset + index * l.schema.size + f.offset,
             encode(f, &input)?,
@@ -627,6 +685,29 @@ pub fn elements_update(
     Ok(())
 }
 #[tauri::command]
+pub async fn gshop_export_server(
+    document: u64,
+    path: PathBuf,
+    state: tauri::State<'_, Elements>,
+) -> R<()> {
+    let bytes = {
+        let guard = state.0.lock().map_err(|e| e.to_string())?;
+        let doc = guard.get(&document).ok_or("No file")?;
+        let shop = gshop::filename(&doc.path).ok_or("Open a client gshop.data file")?;
+        let expected = ["gshopsev.data", "gshopsev1.data", "gshopsev2.data"][shop as usize];
+        if !path.file_name().and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+        {
+            return Err(format!("Server filename: {expected}"));
+        }
+        gshop::export_server(&doc.bytes, doc.lists.first().ok_or("No product list")?)?
+    };
+    tauri::async_runtime::spawn_blocking(move || super::ide::write_export(path, bytes))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub fn elements_save(
     document: u64,
     path: String,
@@ -634,7 +715,7 @@ pub fn elements_save(
     ide: tauri::State<'_, super::ide::Ide>,
 ) -> R<SaveResult> {
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
-    let doc = guard.get_mut(&document).ok_or("Нет файла")?;
+    let doc = guard.get_mut(&document).ok_or("No file")?;
     let target = PathBuf::from(path);
     let backup = if let Some((id, index)) = doc.ide.filter(|_| target == doc.path) {
         let b = doc.encoded();
@@ -660,13 +741,20 @@ pub fn elements_open_ide(
     ide: tauri::State<'_, super::ide::Ide>,
 ) -> R<Summary> {
     let (name, bytes) = super::ide::read_binary(&ide, id, index)?;
-    let mut doc = Document::from_bytes(name.into(), bytes)?;
+    let scope = ide.scope(id)?;
+    let (gshop_version, elements_profile) = scope.manifest().map(super::project::data_profiles).transpose()?.unwrap_or_default();
+    let mut doc = Document::from_bytes_with_version(name.into(), bytes, gshop_version, elements_profile.as_ref())?;
+    if let (Some(manifest), Some(version)) = (scope.manifest(), doc.gshop_version) {
+        super::project::remember_gshop_version(manifest, &scope.entries[index].path, version)?;
+    }
     doc.ide = Some((id, index));
     let document = state.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let summary = Summary {
         id: document,
         path: doc.path.to_string_lossy().into(),
         encrypted: doc.encrypted,
+        gshop_version: doc.gshop_version,
+        elements_version: doc.gshop_version.is_none().then(|| u16::from_le_bytes(doc.bytes[..2].try_into().unwrap())),
         lists: doc
             .lists
             .iter()
@@ -708,7 +796,7 @@ fn save_document(doc: &mut Document, target: PathBuf) -> R<String> {
         if target.canonicalize().ok() == doc.path.canonicalize().ok()
             && std::fs::read(&target).map_err(|e| e.to_string())? != doc.original
         {
-            return Err("Файл изменён другой программой. Сохраните под новым именем.".into());
+            return Err("File was changed by another program. Save under a new name.".into());
         }
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -722,7 +810,7 @@ fn save_document(doc: &mut Document, target: PathBuf) -> R<String> {
         std::fs::copy(&target, &backup_path).map_err(|e| e.to_string())?;
         backup = backup_path.to_string_lossy().into();
     }
-    let mut temp = tempfile::NamedTempFile::new_in(target.parent().ok_or("Нет каталога")?)
+    let mut temp = tempfile::NamedTempFile::new_in(target.parent().ok_or("No directory")?)
         .map_err(|e| e.to_string())?;
     temp.write_all(&b).map_err(|e| e.to_string())?;
     temp.as_file().sync_all().map_err(|e| e.to_string())?;
@@ -736,6 +824,19 @@ fn save_document(doc: &mut Document, target: PathBuf) -> R<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires real elements.data files"]
+    fn opens_elements_samples_without_changing_bytes() {
+        let paths = std::env::var_os("PW_ELEMENTS_TEST_FILES").expect("Set PW_ELEMENTS_TEST_FILES");
+        for path in std::env::split_paths(&paths) {
+            let doc = Document::open(path.clone()).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            assert!(!doc.lists.is_empty());
+            assert_eq!(doc.encoded(), doc.original);
+            let version = u16::from_le_bytes(doc.bytes[..2].try_into().unwrap());
+            eprintln!("{}: version {version}, {} tables, XOR={}", path.display(), doc.lists.len(), doc.encrypted);
+        }
+    }
+
     #[test]
     fn encryption_is_reversible() {
         let a: Vec<u8> = (0..=255).cycle().take(3072).collect();
@@ -783,7 +884,7 @@ mod tests {
         std::fs::write(&target, b"external modification").unwrap();
         assert!(save_document(&mut doc, target)
             .unwrap_err()
-            .contains("другой программой"));
+            .contains("another program"));
     }
     #[test]
     #[ignore]
@@ -860,4 +961,22 @@ mod tests {
         assert_eq!(&reopened.bytes[offset..offset + 4], &54321u32.to_le_bytes());
         assert_eq!(std::fs::read(original).unwrap(), original_bytes);
     }
+}
+
+pub(super) fn mcp_read(name: &str, bytes: Vec<u8>, args: &serde_json::Value) -> R<serde_json::Value> {
+    let doc = Document::from_bytes(name.into(), bytes)?;
+    if let Some(list) = args["list"].as_u64() {
+        let row = args["row"].as_u64().ok_or("Expected row")?;
+        return serde_json::to_value(record(&doc, list as usize, row as usize)?).map_err(super::err);
+    }
+    Ok(serde_json::json!({"lists":doc.lists.iter().map(|list| serde_json::json!({"schema":list.schema,"count":list.count})).collect::<Vec<_>>()}))
+}
+
+pub(super) fn mcp_patch(name: &str, bytes: Vec<u8>, args: &serde_json::Value) -> R<Vec<u8>> {
+    let mut doc = Document::from_bytes(name.into(), bytes)?;
+    let list = args["list"].as_u64().ok_or("Expected list")? as usize;
+    let row = args["row"].as_u64().ok_or("Expected row")? as usize;
+    let changes = serde_json::from_value(args["fields"].clone()).map_err(super::err)?;
+    update(&mut doc, list, row, changes)?;
+    Ok(doc.encoded())
 }

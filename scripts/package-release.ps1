@@ -12,18 +12,19 @@ $names = @('native-gfx.exe', 'ImmWrapper.dll', 'ifc22.dll', 'zlibwapi.dll', 'msv
 foreach ($name in $names) {
     if (-not (Test-Path -LiteralPath (Join-Path $NativeRuntime $name) -PathType Leaf)) {throw "Missing native runtime: $name"}
 }
-if (-not (Test-Path -LiteralPath $AppExe -PathType Leaf)) {throw 'pckview.exe is missing'}
+if (-not (Test-Path -LiteralPath $AppExe -PathType Leaf)) {throw 'pwforge.exe is missing'}
 # Build the archive in an isolated staging folder. Never zip source directories.
 $staging = Join-Path ([IO.Path]::GetTempPath()) ('pckview-package-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $staging | Out-Null
 try {
-    Copy-Item -LiteralPath $AppExe -Destination (Join-Path $staging 'pckview.exe')
+    Copy-Item -LiteralPath $AppExe -Destination (Join-Path $staging 'pwforge.exe')
     foreach ($name in $names) {Copy-Item -LiteralPath (Join-Path $NativeRuntime $name) -Destination (Join-Path $staging $name)}
+    New-Item -ItemType File -Path (Join-Path $staging 'pwforge-portable.marker') | Out-Null
     $lines = Get-ChildItem -LiteralPath $staging -File | Sort-Object Name | ForEach-Object {"$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"}
     [IO.File]::WriteAllLines((Join-Path $staging 'SHA256SUMS.txt'), [string[]]@($lines), $utf8)
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
     $Destination = (Resolve-Path -LiteralPath $Destination).Path
-    $zip = Join-Path $Destination "LRPW-PCK-View-$version-windows-x64.zip"
+    $zip = Join-Path $Destination "PW-Forge-$version-windows-x64-portable.zip"
     Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip -Force
     $zipChecksum = "$((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($zip))"
     [IO.File]::WriteAllLines((Join-Path $Destination 'SHA256SUMS.txt'), [string[]]@($zipChecksum), $utf8)

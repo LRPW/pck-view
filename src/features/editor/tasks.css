@@ -10,7 +10,7 @@
     align-items: center;
     gap: 8px;
     padding: 8px;
-    border-bottom: 1px solid #253044;
+    border-bottom: 1px solid var(--chakra-colors-border);
 }
 
 .tasks-workspace {
@@ -43,7 +43,7 @@
 
 .tasks-workspace nav code {
     flex: none;
-    color: #98afc3;
+    color: var(--chakra-colors-fg-muted);
 }
 
 .tasks-workspace nav span {
@@ -51,8 +51,8 @@
 }
 
 .tasks-workspace nav button[aria-pressed="true"] {
-    background: #17473f;
-    border-color: #63e2c5;
+    background: var(--chakra-colors-teal-subtle);
+    border-color: var(--chakra-colors-teal-fg);
 }
 
 .tasks-workspace footer {
@@ -100,8 +100,8 @@
 }
 
 .task-tree button[aria-pressed="true"], .task-sections button[data-selected] {
-    background: #17473f;
-    border-color: #63e2c5;
+    background: var(--chakra-colors-teal-subtle);
+    border-color: var(--chakra-colors-teal-fg);
 }
 
 .task-sections {
@@ -118,9 +118,9 @@
 }
 
 .task-field textarea {
-    background: #101b29;
+    background: var(--chakra-colors-bg);
     color: inherit;
-    border: 1px solid #34465e;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 4px;
     resize: vertical;
 }
@@ -156,7 +156,7 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     padding: 6px;
-    background: #101924;
+    background: var(--chakra-colors-bg);
 }
 
 .task-record-actions {
@@ -184,13 +184,13 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    background: #101924;
+    background: var(--chakra-colors-bg);
     text-align: left;
 }
 
 .task-npc-table th, .task-npc-table td {
     padding: 4px 8px;
-    border-bottom: 1px solid #253044;
+    border-bottom: 1px solid var(--chakra-colors-border);
 }
 
 .task-npc-table th .column-divider {
@@ -203,7 +203,7 @@
 }
 
 .task-npc-table .modified {
-    background: #15352f;
+    background: var(--chakra-colors-teal-subtle);
 }
 
 .task-npc-name {
@@ -221,30 +221,30 @@
 
 .task-npc-warning {
     padding: 8px;
-    color: #dcb879;
+    color: var(--chakra-colors-orange-fg);
 }
 
 .task-npc-editor {
-    color: #e2e8f0;
-    background: #101720;
+    color: var(--chakra-colors-fg);
+    background: var(--chakra-colors-bg);
     color-scheme: dark;
 }
 
 .task-npc-editor table, .task-npc-editor th, .task-npc-editor td {
-    color: #e2e8f0;
+    color: var(--chakra-colors-fg);
 }
 
 .task-npc-editor code {
-    color: #b8cbe0;
+    color: var(--chakra-colors-fg-muted);
 }
 
 .task-npc-editor input {
-    color: #e2e8f0;
-    background: #101b29;
+    color: var(--chakra-colors-fg);
+    background: var(--chakra-colors-bg);
 }
 
 .task-npc-editor input::placeholder {
-    color: #98afc3;
+    color: var(--chakra-colors-fg-muted);
     opacity: 1;
 }
 
@@ -253,7 +253,7 @@
     align-items: center;
     gap: 6px;
     min-width: 0;
-    color: #e2e8f0;
+    color: var(--chakra-colors-fg);
 }
 
 .task-npc-reference input {
@@ -276,7 +276,7 @@
 }
 
 .task-block-card {
-    border: 1px solid #34465e;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 5px;
     padding: 8px;
 }
@@ -311,9 +311,9 @@
 
 .task-award-table th, .task-award-table td {
     padding: 4px;
-    color: #e2e8f0;
+    color: var(--chakra-colors-fg);
     text-align: left;
-    border-bottom: 1px solid #253044;
+    border-bottom: 1px solid var(--chakra-colors-border);
 }
 
 .task-award-table th {
@@ -331,9 +331,9 @@
 }
 
 .task-block textarea {
-    background: #101b29;
+    background: var(--chakra-colors-bg);
     color: inherit;
-    border: 1px solid #34465e;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 4px;
     resize: vertical;
 }

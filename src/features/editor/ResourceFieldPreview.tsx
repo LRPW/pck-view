@@ -1,3 +1,4 @@
+import {Box} from "@chakra-ui/react";
 import {useEffect, useRef, useState} from 'react';
 import {MediaPreview, mediaType} from '../media/MediaPreview';
 
@@ -33,7 +34,7 @@ export function ResourceFieldPreview({path, read}: {
         };
     }, [visible, path, read, image?.path]);
 
-    return <div className="resource-thumbnail" ref={target}>
+    return <Box className="resource-thumbnail" ref={target}>
         {image?.path === path && <MediaPreview name={path} bytes={image.bytes} thumbnail/>}
-    </div>;
+    </Box>;
 }

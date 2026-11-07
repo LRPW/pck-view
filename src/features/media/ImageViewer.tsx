@@ -1,5 +1,7 @@
-import {t, useLanguage} from '../../i18n/index';
+import {Box, Button} from "@chakra-ui/react";
+import type {ComponentProps} from "react";
 import {useEffect, useRef, useState} from 'react';
+import {t, useLanguage} from '../../i18n/index';
 
 export function ImageViewer({src, name, onError}: { src: string; name: string; onError: () => void }) {
     useLanguage();
@@ -43,28 +45,30 @@ export function ImageViewer({src, name, onError}: { src: string; name: string; o
     useEffect(() => {
         fit();
     }, [size]);
+    const handleDivPointerDown: ComponentProps<"div">["onPointerDown"] = event => {
+        if (event.button !== 0 && event.button !== 1) return;
+        event.preventDefault();
+        drag.current = {x: event.clientX, y: event.clientY, left: view.x, top: view.y};
+        event.currentTarget.setPointerCapture(event.pointerId);
+        event.currentTarget.style.cursor = 'grabbing';
+    };
+    const handleDivPointerUp: ComponentProps<"div">["onPointerUp"] = event => {
+        drag.current = undefined;
+        event.currentTarget.style.cursor = 'grab';
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    };
     return <>
-        <div className="media-toolbar">
-            <button onClick={fit}>{t("Вписать")}</button>
-            <button onClick={() => center(1)}>100%</button>
-            <span>{Math.round(view.scale * 100)}%</span><span>{size.width} × {size.height}</span></div>
-        <div ref={stage} className="image-stage zoom-stage" onDoubleClick={fit}
-             onPointerDown={event => {
-                 if (event.button !== 0 && event.button !== 1) return;
-                 event.preventDefault();
-                 drag.current = {x: event.clientX, y: event.clientY, left: view.x, top: view.y};
-                 event.currentTarget.setPointerCapture(event.pointerId);
-                 event.currentTarget.style.cursor = 'grabbing';
-             }}
+        <Box className="media-toolbar">
+            <Button onClick={fit}>{t("Fit")}</Button>
+            <Button onClick={() => center(1)}>100%</Button>
+            <span>{Math.round(view.scale * 100)}%</span><span>{size.width} × {size.height}</span></Box>
+        <Box ref={stage} className="image-stage zoom-stage" onDoubleClick={fit}
+             onPointerDown={handleDivPointerDown}
              onPointerMove={event => {
                  const d = drag.current;
                  if (d) setView(old => ({...old, x: d.left + event.clientX - d.x, y: d.top + event.clientY - d.y}));
              }}
-             onPointerUp={event => {
-                 drag.current = undefined;
-                 event.currentTarget.style.cursor = 'grab';
-                 if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-             }}
+             onPointerUp={handleDivPointerUp}
              onLostPointerCapture={event => {
                  drag.current = undefined;
                  event.currentTarget.style.cursor = 'grab';
@@ -78,6 +82,6 @@ export function ImageViewer({src, name, onError}: { src: string; name: string; o
                      height: size.height || undefined,
                      transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`
                  }}/>
-        </div>
+        </Box>
     </>;
 }

@@ -1,11 +1,12 @@
-import {flexLayout} from './flex-layout';
-import {uiTextStyle} from './ui-text-style';
-import {useGameFontFamily} from "./GameFonts";
-import {ResourceLoading} from "./ResourceLoading";
-import {GfxPreview} from "./GfxPreview";
+import {message, t} from "../../i18n";
 import {useEffect, useState} from 'react';
 import {useResourceInvoke} from '../editor/resource-context';
+import {flexLayout} from './flex-layout';
+import {useGameFontFamily} from "./GameFonts";
+import {GfxPreview} from "./GfxPreview";
 import {attr, TextureFrame, useInterfaceTextures} from './InterfaceTextures';
+import {ResourceLoading} from "./ResourceLoading";
+import {uiTextStyle} from './ui-text-style';
 
 const normalize = (name: string) => name.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
 const num = (e: Element, key: string, fallback: number) => {
@@ -45,14 +46,14 @@ export function SubDialogCanvas({file, parentFile = '', entries, ancestors = []}
         setModel(null);
         setError('');
         if (cycle || index < 0) {
-            setError(cycle ? 'Циклический SUBDIALOG' : `Не найден: ${file}`);
+            setError(cycle ? t("Cyclic SUBDIALOG") : t("Not found: {value0}", {value0: file}));
             return;
         }
         void invoke<number[]>('read_entry', {index}).then(data => {
             if (cancelled) return;
             const doc = new DOMParser().parseFromString(decode(new Uint8Array(data)), 'application/xml');
             const root = Array.from(doc.getElementsByTagName('*')).find(e => e.tagName.toUpperCase() === 'DIALOG');
-            if (doc.querySelector('parsererror') || !root) throw Error('Некорректный XML SUBDIALOG');
+            if (doc.querySelector('parsererror') || !root) throw Error(t("Invalid SUBDIALOG XML"));
             setModel(root);
         }).catch(reason => {
             if (!cancelled) setError(String(reason));
@@ -62,8 +63,8 @@ export function SubDialogCanvas({file, parentFile = '', entries, ancestors = []}
         };
     }, [index, cycle, file, entries]);
     const {textures, progress, loading} = useInterfaceTextures(model, entries);
-    if (error) return <span style={{fontSize: 10, color: '#ffb4a4'}}>{error}</span>;
-    if (!model) return <ResourceLoading label="Загрузка сабдиалога…" detail={file}/>;
+    if (error) return <span style={{fontSize: 10, color: 'var(--chakra-colors-fg-error)'}}>{message(error)}</span>;
+    if (!model) return <ResourceLoading label={t("Loading subdialog…")} detail={file}/>;
     return <span style={{
         position: 'absolute',
         left: 0,
@@ -72,7 +73,8 @@ export function SubDialogCanvas({file, parentFile = '', entries, ancestors = []}
         height: Math.max(0, num(model, 'Height', 0)),
         pointerEvents: 'none'
     }}>
-        {loading && <ResourceLoading label="Загрузка текстур" completed={progress.completed} total={progress.total}/>}
+        {loading &&
+            <ResourceLoading label={t("Loading textures")} completed={progress.completed} total={progress.total}/>}
         <TextureFrame element={model} textures={textures}/>
         {[...flexLayout(model).values()].map((box, i) => {
             const e = box.element;

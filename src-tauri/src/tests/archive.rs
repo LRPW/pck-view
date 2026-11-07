@@ -172,3 +172,38 @@ fn encrypted_raw_entry_uses_original_size_for_decryption_mask() {
     archive.entries[0].packed = encrypted.len() as u32;
     assert_eq!(archive.data(0).unwrap(), payload);
 }
+
+#[test]
+fn standalone_save_replaces_data_and_removes_stale_companion() {
+    let temp = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let files = temp.path().join("files");
+    std::fs::create_dir(&files).unwrap();
+    std::fs::write(files.join("entry.xml"), b"<DIALOG/>").unwrap();
+    let target = temp.path().join("standalone.pck");
+    let mut archive = pack_folder_impl(&files, &target, &|_, _, _| {}).unwrap();
+    let companion = target.with_extension("pkx");
+    std::fs::write(&companion, b"stale").unwrap();
+    let replacement = b"<DIALOG Width=\"10\"/>";
+    archive.entries[0].data = Some(replacement.to_vec());
+    archive.entries[0].len = replacement.len() as u32;
+    assert!(archive.save_new(&target).is_err());
+    assert_eq!(std::fs::read(&companion).unwrap(), b"stale");
+    archive.save(&target).unwrap();
+    assert!(!companion.exists());
+    assert_eq!(Archive::open(target).unwrap().data(0).unwrap(), replacement);
+}
+
+#[test]
+fn standalone_pair_publication_restores_companion_on_failure() {
+    let temp = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let target = temp.path().join("blocked.pck");
+    std::fs::create_dir(&target).unwrap();
+    let companion = target.with_extension("pkx");
+    std::fs::write(&companion, b"old companion").unwrap();
+    let stage = tempfile::tempdir_in(temp.path()).unwrap();
+    let staged = stage.path().join("archive.pck");
+    std::fs::write(&staged, b"new primary").unwrap();
+    std::fs::write(staged.with_extension("pkx"), b"new companion").unwrap();
+    assert!(publish_archive(stage, &staged, &target, true).is_err());
+    assert_eq!(std::fs::read(companion).unwrap(), b"old companion");
+}

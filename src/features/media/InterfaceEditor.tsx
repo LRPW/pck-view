@@ -1,12 +1,22 @@
-import {EditorSwitch} from '../editor/EditorSwitch';
-import {useColumnWidth} from '../editor/useColumnWidth';
-import {canonicalFontName, UI_FONTS} from './ui-fonts';
-import {GameFonts, useGameFonts} from "./GameFonts";
-import {ResourceLoading} from "./ResourceLoading";
-import {XmlTree} from "./XmlTree";
-import {useResourceInvoke} from '../editor/resource-context';
+import {DTF_TYPES} from '../editor/dtf-layout';
+import {InterfaceProperties} from './InterfaceProperties';
+import {ControllerGenerator} from './ControllerGenerator';
+import {matchesShortcut} from '../../app/shortcuts';
+import {message, t} from "../../i18n";
+import {Alert, Box, Button, Field, Flex, Input, Select, Text} from "@chakra-ui/react";
+import type {ComponentProps} from "react";
 import {type PointerEvent as ReactPointerEvent, useEffect, useMemo, useState} from 'react';
+import {AccordionItem, AccordionItemContent, AccordionItemTrigger, AccordionRoot} from "../../components/ui/accordion";
+import {SelectContent, SelectItem, SelectRoot, SelectTrigger, SelectValueText} from "../../components/ui/select";
+import {EditorSwitch} from '../editor/EditorSwitch';
+import {useClientVersion, useResourceInvoke} from '../editor/resource-context';
+import {selectCollection} from '../editor/select-collection';
+import {useColumnWidth} from '../editor/useColumnWidth';
+import {GameFonts, useGameFonts} from "./GameFonts";
 import {InterfacePreview} from './InterfacePreview';
+import {ResourceLoading} from "./ResourceLoading";
+import {canonicalFontName, normalizeUiFontNames, xmlFontName} from './ui-fonts';
+import {XmlTree} from "./XmlTree";
 
 export function InterfaceEditor({
                                     text,
@@ -30,16 +40,20 @@ export function InterfaceEditor({
     const invoke = useResourceInvoke();
     const gameFonts = useGameFonts(entries);
     const [selection, setSelection] = useState(initialView?.selection ?? 0);
+    const [selections, setSelections] = useState<number[]>([]);
     const [zoom, setZoom] = useState(initialView?.zoom ?? 1);
     useEffect(() => {
         onViewChange?.({selection, zoom});
     }, [selection, zoom, onViewChange]);
     const [undo, setUndo] = useState<string[]>([]), [redo, setRedo] = useState<string[]>([]);
     const [error, setError] = useState('');
-    const [newType, setNewType] = useState('STILLIMAGEBUTTON');
-    const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+    const lrpw = useClientVersion() === '1.5.5-lrpw';
+    const [chosenType, setNewType] = useState('STILLIMAGEBUTTON');
+    const newType = !lrpw && chosenType === 'DIV' ? 'STILLIMAGEBUTTON' : chosenType;
+    const [menu, setMenu] = useState<{ x: number; y: number; element?: boolean } | null>(null);
+    const [createMenu, setCreateMenu] = useState(false);
     const [rename, setRename] = useState<string | null>(null);
-    const types = ['DIV', 'STILLIMAGEBUTTON', 'LABEL', 'EDIT', 'IMAGEPICTURE', 'CHECK', 'RADIO', 'LIST', 'COMBO', 'TREE', 'PROGRESS', 'SLIDER', 'SCROLL', 'TEXT', 'VERTICALTEXT', 'SUBDIALOG', 'CONSOLE', 'WINDOWPICTURE'];
+    const types = ['DIV', 'STILLIMAGEBUTTON', 'LABEL', 'EDIT', 'IMAGEPICTURE', 'CHECK', 'RADIO', 'LIST', 'COMBO', 'TREE', 'PROGRESS', 'SLIDER', 'SCROLL', 'TEXT', 'VERTICALTEXT', 'SUBDIALOG', 'CONSOLE', 'WINDOWPICTURE'].filter(type => (lrpw || type !== 'DIV') && (!fileName?.toLowerCase().endsWith('.dtf') || DTF_TYPES.includes(type)));
     const [hiddenElements, setHiddenElements] = useState<string[]>([]);
     const [gridAnchor, setGridAnchor] = useState<[number, number]>([0, 0]);
     const [borders, setBorders] = useState(true);
@@ -88,13 +102,17 @@ export function InterfaceEditor({
         if (element?.tagName.toUpperCase() !== 'SUBDIALOG') return;
         const file = element.getAttribute('DialogFile');
         if (!file) {
-            setError('У SUBDIALOG не указан DialogFile');
+            setError(t("SUBDIALOG has no DialogFile"));
             return;
         }
         onOpenDialog?.(file);
     }
 
     function insert(source: Element, offset = true) {
+        if (!lrpw && [source, ...Array.from(source.querySelectorAll('*'))].some(element => element.tagName.toUpperCase() === 'DIV' || Array.from(element.attributes).some(attribute => attribute.name.toLowerCase() === 'fontname' && canonicalFontName(attribute.value) === 'mono'))) {
+            setError(t('DIV and mono require 1.5.5 (LRPW)'));
+            return;
+        }
         if (disabled || !root || !types.includes(source.tagName.toUpperCase())) return;
         const clone = doc.importNode(source, true);
         const used = new Set(nodes.map(e => e.getAttribute('Name')).filter(Boolean));
@@ -116,33 +134,39 @@ export function InterfaceEditor({
         commit();
     }
 
-    function create() {
-        const element = doc.createElement(newType);
+    function create(type = newType) {
+        const element = doc.createElement(type);
         for (const [name, value] of Object.entries({
-            Name: newType,
+            Name: type,
             x: '16',
             y: '16',
             Width: '120',
             Height: '28'
         })) element.setAttribute(name, value);
-        if (newType === 'DIV') {
+        if (type === 'DIV') {
             element.setAttribute('Direction', 'row');
             element.setAttribute('AutoSize', 'true');
             element.setAttribute('Gap', '8');
             insert(element, false);
             return;
         }
+        if (fileName?.toLowerCase().endsWith('.dtf') && !['LABEL', 'STILLIMAGEBUTTON'].includes(type)) {
+            insert(element, false);
+            return;
+        }
         const label = doc.createElement('Text');
-        label.setAttribute('String', newType);
+        label.setAttribute('String', type);
         label.setAttribute('FontSize', '12');
-        label.setAttribute('FontName', 'text');
+        label.setAttribute('FontName', xmlFontName('text'));
         element.appendChild(label);
         insert(element, false);
     }
 
     function remove() {
         if (!isControl || disabled) return;
-        selected.remove();
+        const targets = (selections.length ? selections : [selection]).map(index => nodes[index]).filter(element => element && element !== root);
+        for (const element of targets) element.remove();
+        setSelections([]);
         setSelection(0);
         commit();
     }
@@ -150,7 +174,7 @@ export function InterfaceEditor({
     function pasteXml(xml: string) {
         const source = new DOMParser().parseFromString(xml.replace(/^\uFEFF/, ''), 'application/xml');
         if (source.querySelector('parsererror') || !types.includes(source.documentElement.tagName.toUpperCase())) {
-            setError('Буфер должен содержать XML одного элемента AUInterface');
+            setError(t("The clipboard must contain one AUInterface XML element"));
             return;
         }
         insert(source.documentElement);
@@ -162,7 +186,7 @@ export function InterfaceEditor({
             if (action === 'copy' && isControl) await navigator.clipboard.writeText(new XMLSerializer().serializeToString(selected));
             if (action === 'paste' && !disabled) pasteXml(await navigator.clipboard.readText());
         } catch {
-            setError('Нет доступа к буферу обмена. Используйте Ctrl+C / Ctrl+V в дереве.');
+            setError(t("Clipboard access is unavailable. Use Ctrl+C / Ctrl+V in the tree."));
         }
     }
 
@@ -170,7 +194,7 @@ export function InterfaceEditor({
         setUndo(old => [...old.slice(-99), text]);
         setRedo([]);
         const prefix = text.startsWith('\uFEFF') ? '\uFEFF' : '';
-        onChange(prefix + new XMLSerializer().serializeToString(doc));
+        onChange(normalizeUiFontNames(prefix + new XMLSerializer().serializeToString(doc)));
         setError('');
     }
 
@@ -193,145 +217,268 @@ export function InterfaceEditor({
         commit();
     }
 
+    function changeFont({value}: { value: string[] }) {
+        change('FontName', xmlFontName(value[0]));
+    }
+
     function change(name: string, value: string) {
+        if (!lrpw && name.toLowerCase() === 'fontname' && canonicalFontName(value) === 'mono') {
+            setError(t('DIV and mono require 1.5.5 (LRPW)'));
+            return;
+        }
         if (!selected || disabled) return;
         if (name === 'Name' && nodes.some(n => n !== selected && n.getAttribute('Name') === value)) {
-            setError('Имя уже используется');
+            setError(t("This name is already in use"));
             return;
         }
         if (/^(x|y|Width|Height|FontSize)$/i.test(name) && (!Number.isFinite(Number(value)) || value.trim() === '' || (/^(Width|Height|FontSize)$/i.test(name) && Number(value) < 0))) {
-            setError('Введите допустимое число');
+            setError(t("Enter a valid number"));
             return;
         }
-        selected.setAttribute(name, value);
+        if (value === '') {
+            selected.removeAttribute(name);
+            commit();
+            return;
+        }
+        selected.setAttribute(name, name.toLowerCase() === 'fontname' ? xmlFontName(value) : value);
         commit();
     }
 
     if (!valid) return <InterfacePreview fileName={fileName} text={text} entries={entries}/>;
+    const handleDivCopy: ComponentProps<"div">["onCopy"] = event => {
+        if (editingText(event.target) || !isControl) return;
+        event.preventDefault();
+        event.clipboardData.setData('text/plain', new XMLSerializer().serializeToString(selected));
+    };
+    const handleDivPaste: ComponentProps<"div">["onPaste"] = event => {
+        if (editingText(event.target) || disabled) return;
+        event.preventDefault();
+        const source = new DOMParser().parseFromString(event.clipboardData.getData('text/plain').replace(/^\uFEFF/, ''), 'application/xml');
+        if (source.querySelector('parsererror') || !types.includes(source.documentElement.tagName.toUpperCase())) {
+            setError(t("The clipboard must contain one AUInterface XML element"));
+            return;
+        }
+        insert(source.documentElement);
+    };
+    const handleDivKeyDown: ComponentProps<"div">["onKeyDown"] = event => {
+        if (editingText(event.target) || disabled) return;
+        if (event.key === 'F2' && selected?.hasAttribute('Name')) {
+            event.preventDefault();
+            setRename(selected.getAttribute('Name'));
+        }
+        if (event.key === 'Delete') {
+            event.preventDefault();
+            remove();
+        }
+        if (matchesShortcut(event.nativeEvent, 'duplicate') && isControl) {
+            event.preventDefault();
+            event.stopPropagation();
+            insert(selected);
+        }
+    };
+    const handleFormSubmit: ComponentProps<"form">["onSubmit"] = e => {
+        e.preventDefault();
+        if (!rename?.trim()) {
+            setError(t("The name cannot be empty"));
+            return;
+        }
+        if (nodes.some(n => n !== selected && n.getAttribute('Name') === rename.trim())) {
+            setError(t("This name is already in use"));
+            return;
+        }
+        change('Name', rename.trim());
+        setRename(null);
+    };
+    const handleButtonClick: ComponentProps<typeof Button>["onClick"] = () => {
+        setRedo(old => [...old, text]);
+        onChange(undo[undo.length - 1]);
+        setUndo(old => old.slice(0, -1));
+    };
+    const handleButtonClick2: ComponentProps<typeof Button>["onClick"] = () => {
+        setUndo(old => [...old, text]);
+        onChange(redo[redo.length - 1]);
+        setRedo(old => old.slice(0, -1));
+    };
+    const handleButtonClick3: ComponentProps<typeof Button>["onClick"] = () => {
+        if (selected) setBorderOverrides(old => ({
+            ...old,
+            [borderKey(selected)]: !selectedBorder
+        }));
+    };
+    const handleInterfacePreviewGeometry: ComponentProps<typeof InterfacePreview>["onGeometry"] = (index, values) => {
+        if (disabled || !nodes[index]) return;
+        if (selections.includes(index) && selections.length > 1 && values.x !== undefined && values.y !== undefined && values.Width === undefined) {
+            const dx = values.x - Number(nodes[index].getAttribute('x') ?? 0),
+                dy = values.y - Number(nodes[index].getAttribute('y') ?? 0);
+            const elements = selections.map(i => nodes[i]).filter(Boolean);
+            for (const element of elements) {
+                if (elements.some(parent => parent !== element && parent.contains(element))) continue;
+                element.setAttribute('x', String(Number(element.getAttribute('x') ?? 0) + dx));
+                element.setAttribute('y', String(Number(element.getAttribute('y') ?? 0) + dy));
+            }
+        } else for (const [key, value] of Object.entries(values)) nodes[index].setAttribute(key, String(value));
+        setSelection(index);
+        commit();
+    };
+    const handleSelectRootValueChange: ComponentProps<typeof Select.Root>["onValueChange"] = async ({value: [value]}) => {
+        const parent = nodes[Number(value)];
+        if (!parent || parent === selected || selected.contains(parent)) return;
+        parent.appendChild(selected);
+        setSelection(Array.from(doc.getElementsByTagName('*')).indexOf(selected));
+        commit();
+    };
+    const handleButtonClick4: ComponentProps<typeof Button>["onClick"] = () => {
+        selected.parentElement!.insertBefore(selected, selected.previousElementSibling);
+        setSelection(Array.from(doc.getElementsByTagName('*')).indexOf(selected));
+        commit();
+    };
+    const handleButtonClick5: ComponentProps<typeof Button>["onClick"] = () => {
+        const next = selected.nextElementSibling;
+        if (next) selected.parentElement!.insertBefore(next, selected);
+        setSelection(Array.from(doc.getElementsByTagName('*')).indexOf(selected));
+        commit();
+    };
+    const handleFormSubmit2: ComponentProps<"form">["onSubmit"] = e => {
+        e.preventDefault();
+        const data = new FormData(e.currentTarget);
+        const name = String(data.get('name') ?? '').trim();
+        if (!/^[A-Za-z_][\w.-]*$/.test(name)) {
+            setError(t("Invalid attribute name"));
+            return;
+        }
+        change(name, String(data.get('value') ?? ''));
+    };
     return <GameFonts.Provider value={gameFonts.names}>
-        <div className="ui-editor" tabIndex={0} onCopy={event => {
-            if (editingText(event.target) || !isControl) return;
-            event.preventDefault();
-            event.clipboardData.setData('text/plain', new XMLSerializer().serializeToString(selected));
-        }} onPaste={event => {
-            if (editingText(event.target) || disabled) return;
-            event.preventDefault();
-            const source = new DOMParser().parseFromString(event.clipboardData.getData('text/plain').replace(/^\uFEFF/, ''), 'application/xml');
-            if (source.querySelector('parsererror') || !types.includes(source.documentElement.tagName.toUpperCase())) {
-                setError('Буфер должен содержать XML одного элемента AUInterface');
-                return;
-            }
-            insert(source.documentElement);
-        }} onKeyDown={event => {
-            if (editingText(event.target) || disabled) return;
-            if (event.key === 'F2' && selected?.hasAttribute('Name')) {
-                event.preventDefault();
-                setRename(selected.getAttribute('Name'));
-            }
-            if (event.key === 'Delete') {
-                event.preventDefault();
-                remove();
-            }
-            if ((event.ctrlKey || event.metaKey) && event.code === 'KeyD' && isControl) {
-                event.preventDefault();
-                event.stopPropagation();
-                insert(selected);
-            }
-        }}>
-            {menu && <div className="xml-context-backdrop" onPointerDown={() => setMenu(null)} onContextMenu={e => {
+        <Box className="ui-editor" tabIndex={0} onCopy={handleDivCopy} onPaste={handleDivPaste}
+             onKeyDown={handleDivKeyDown}>
+            {menu && <Box className="xml-context-backdrop" onPointerDown={() => setMenu(null)} onContextMenu={e => {
                 e.preventDefault();
                 setMenu(null);
             }}>
-                <div role="menu" aria-label="Действия элемента" className="xml-context-menu" style={{
+                <Box role="menu" aria-label={t("Element actions")} className="xml-context-menu" style={{
                     left: Math.max(0, Math.min(menu.x, window.innerWidth - 230)),
                     top: Math.max(0, Math.min(menu.y, window.innerHeight - 280))
                 }} onPointerDown={e => e.stopPropagation()} onKeyDown={e => {
                     if (e.key === 'Escape') setMenu(null);
                 }}>
-                    <button role="menuitem" autoFocus disabled={disabled} onClick={() => {
-                        setMenu(null);
-                        create();
-                    }}>＋ Создать {newType}</button>
-                    <button role="menuitem" disabled={disabled || !isControl} onClick={() => {
-                        setMenu(null);
-                        insert(selected);
-                    }}>⧉ Дублировать <kbd>Ctrl+D</kbd></button>
-                    <button role="menuitem" disabled={!isControl}
-                            onClick={() => void clipboard('copy')}>Копировать <kbd>Ctrl+C</kbd></button>
-                    <button role="menuitem" disabled={disabled}
-                            onClick={() => void clipboard('paste')}>Вставить <kbd>Ctrl+V</kbd></button>
-                    <button role="menuitem" disabled={disabled || !selected?.hasAttribute('Name')} onClick={() => {
-                        setMenu(null);
-                        setRename(selected.getAttribute('Name'));
-                    }}>✎ Переименовать <kbd>F2</kbd></button>
-                    <button role="menuitem" disabled={disabled || !isControl} onClick={() => {
-                        setMenu(null);
-                        remove();
-                    }}>Удалить <kbd>Delete</kbd></button>
-                </div>
-            </div>}
-            {rename !== null && <form className="xml-rename" onSubmit={e => {
-                e.preventDefault();
-                if (!rename.trim()) {
-                    setError('Имя не может быть пустым');
-                    return;
-                }
-                if (nodes.some(n => n !== selected && n.getAttribute('Name') === rename.trim())) {
-                    setError('Имя уже используется');
-                    return;
-                }
-                change('Name', rename.trim());
-                setRename(null);
-            }}>
-                <label>Имя элемента <input autoFocus value={rename} onChange={e => setRename(e.target.value)}
-                                           onFocus={e => e.target.select()} onKeyDown={e => {
-                    if (e.key === 'Escape') setRename(null);
-                }}/></label>
-                <button disabled={disabled}>Применить</button>
-                <button type="button" onClick={() => setRename(null)}>Отмена</button>
+                    <Box position="relative" onMouseEnter={() => setCreateMenu(true)}>
+                        <Button role="menuitem" autoFocus disabled={disabled} aria-haspopup="menu"
+                                aria-expanded={createMenu}
+                                onClick={() => setCreateMenu(value => !value)} onKeyDown={event => {
+                            if (event.key === 'ArrowRight') {
+                                event.preventDefault();
+                                setCreateMenu(true);
+                            }
+                        }}>{t('Create')} <span>›</span></Button>
+                        {createMenu && <Box role="menu" aria-label={t('New element type')} position="absolute"
+                                            left={menu.x > window.innerWidth - 470 ? 'auto' : '100%'}
+                                            right={menu.x > window.innerWidth - 470 ? '100%' : 'auto'} top="0"
+                                            width="220px" maxH="min(480px, 65vh)" overflowY="auto" bg="bg.panel"
+                                            borderWidth="1px" rounded="md" shadow="lg" p="1" zIndex="1">
+                            {types.map(type => <Button key={type} role="menuitem" variant="ghost" size="sm" width="full"
+                                                       justifyContent="start" onClick={() => {
+                                setMenu(null);
+                                setCreateMenu(false);
+                                create(type);
+                            }}>{type}</Button>)}
+                        </Box>}
+                    </Box>
+                    {menu.element && <>
+                        <Button role="menuitem" disabled={disabled || !isControl} onClick={() => {
+                            setMenu(null);
+                            insert(selected);
+                        }}>{t("⧉ Duplicate ")}</Button>
+                        <Button role="menuitem" disabled={disabled || !isControl} onClick={() => {
+                            setMenu(null);
+                            insert(selected, false);
+                        }}>{t('Clone')}</Button>
+                        <Button role="menuitem" disabled={!isControl}
+                                onClick={() => void clipboard('copy')}>{t("Copy ")}<kbd>Ctrl+C</kbd></Button>
+                        <Button role="menuitem" disabled={disabled}
+                                onClick={() => void clipboard('paste')}>{t("Paste ")}<kbd>Ctrl+V</kbd></Button>
+                        <Button role="menuitem" disabled={disabled || !selected?.hasAttribute('Name')} onClick={() => {
+                            setMenu(null);
+                            setRename(selected.getAttribute('Name'));
+                        }}>{t("✎ Rename ")}<kbd>F2</kbd></Button>
+                        <Button role="menuitem" disabled={disabled || !isControl} onClick={() => {
+                            setMenu(null);
+                            remove();
+                        }}>{t("Delete ")}<kbd>Delete</kbd></Button>
+                    </>}
+                </Box>
+            </Box>}
+            {rename !== null && <form className="xml-rename" onSubmit={handleFormSubmit}>
+                <Field.Root width="auto"><Field.Label>{t("Element name")}</Field.Label><Input autoFocus value={rename}
+                                                                                              onChange={e => setRename(e.target.value)}
+                                                                                              onFocus={e => e.target.select()}
+                                                                                              onKeyDown={e => {
+                                                                                                  if (e.key === 'Escape') setRename(null);
+                                                                                              }}/></Field.Root>
+                <Button disabled={disabled}>{t("Apply")}</Button>
+                <Button type="button" onClick={() => setRename(null)}>{t("Cancel")}</Button>
             </form>}
             {gameFonts.status.loading &&
-                <ResourceLoading label="Загрузка игровых шрифтов" completed={gameFonts.status.completed}
+                <ResourceLoading label={t("Loading game fonts")} completed={gameFonts.status.completed}
                                  total={gameFonts.status.total}/>}
-            {gameFonts.status.failed.length > 0 && <details>
-                <summary>Не загружено шрифтов: {gameFonts.status.failed.length}</summary>
-                <pre>{gameFonts.status.failed.join("\n")}</pre>
-            </details>}
-            <div className="ui-editor-toolbar">
-                <strong>Редактор AUInterface</strong>
-                <select aria-label="Тип нового элемента" value={newType}
-                        onChange={e => setNewType(e.target.value)}>{types.map(type => <option
-                    key={type}>{type}</option>)}</select>
-                <button disabled={disabled} onClick={create}>Создать</button>
-                <button disabled={disabled || !isControl} onClick={() => insert(selected)}>Дублировать</button>
-                <button disabled={disabled || !isControl} onClick={remove}>Удалить</button>
-                <EditorSwitch label="Привязка" showLabel checked={snap} change={setSnap}/>
-                <label>Сетка <select value={grid}
-                                     onChange={e => setGrid(Number(e.target.value))}>{[1, 2, 4, 8, 16, 32].map(v =>
-                    <option key={v}>{v}</option>)}</select> px</label>
-                <button disabled={disabled || !undo.length} onClick={() => {
-                    setRedo(old => [...old, text]);
-                    onChange(undo[undo.length - 1]);
-                    setUndo(old => old.slice(0, -1));
-                }}>Отменить
-                </button>
-                <button disabled={disabled || !redo.length} onClick={() => {
-                    setUndo(old => [...old, text]);
-                    onChange(redo[redo.length - 1]);
-                    setRedo(old => old.slice(0, -1));
-                }}>Повторить
-                </button>
-            </div>
-            <div className="ui-editor-toolbar" role="group" aria-label="Выравнивание и рамки">
-                <div className="ui-ribbon-group" role="group" aria-label="Выравнивание относительно окна">
-                    <div className="ui-ribbon-buttons">
-                        {(['x', 'y'] as const).map(axis => <div className="ui-ribbon-cluster" key={axis}>
+            {gameFonts.status.failed.length > 0 &&
+                <AccordionRoot collapsible defaultValue={false ? ["content"] : []}><AccordionItem
+                    value="content"><AccordionItemTrigger>{t("Fonts not loaded: ")}{gameFonts.status.failed.length}</AccordionItemTrigger><AccordionItemContent>
+                    <pre>{gameFonts.status.failed.join("\n")}</pre>
+                </AccordionItemContent></AccordionItem></AccordionRoot>}
+            <Flex align="center" justify="space-between" gap="3" px="3" py="2" borderBottomWidth="1px" bg="bg.panel">
+                <Text fontSize="sm" fontWeight="semibold">{t("AUInterface editor")}</Text>
+                <ControllerGenerator xml={text} fileName={fileName ?? 'Interface.xml'}/>
+            </Flex>
+            <Flex align="center" gap="3" wrap="wrap" px="3" py="2" bg="bg.panel" css={{'& button': {flexShrink: 0}}}>
+                <Flex align="center" gap="1.5">
+                    <SelectRoot size="sm" lazyMount unmountOnExit width="200px" minW="160px" flexShrink="0"
+                                collection={selectCollection(<>{types.map(type => <option
+                                    key={type}>{type}</option>)}</>)} value={[String(newType)]}
+                                onValueChange={async ({value: [value]}) => setNewType(value)}
+                                aria-label={t("New element type")}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                        <SelectItem key={select.collection.getItemValue(item)}
+                                    item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot>
+                    <Button size="sm" colorPalette="teal" disabled={disabled}
+                            onClick={() => create()}>{t("Create")}</Button>
+                </Flex>
+                <Flex align="center" gap="1.5" borderLeftWidth="1px" pl="3">
+                    <Button size="sm" variant="ghost" disabled={disabled || !isControl}
+                            onClick={() => insert(selected)}>{t("Duplicate")}</Button>
+                    <Button size="sm" variant="ghost" disabled={disabled || !isControl}
+                            onClick={remove}>{t("Delete")}</Button>
+                </Flex>
+                <Flex align="center" gap="3" borderLeftWidth="1px" pl="3">
+                    <EditorSwitch label={t("Snapping")} showLabel checked={snap} change={setSnap}/>
+                    <Field.Root width="auto" flexDirection="row" alignItems="center" gap="2"><Field.Label mb="0"
+                                                                                                          whiteSpace="nowrap">{t("Grid px")}</Field.Label><SelectRoot
+                        size="sm" lazyMount
+                        unmountOnExit width="76px" minW="76px"
+                        collection={selectCollection(<>{[1, 2, 4, 8, 16, 32].map(v =>
+                            <option
+                                key={v}>{v}</option>)}</>)}
+                        value={[String(grid)]}
+                        onValueChange={async ({value: [value]}) => setGrid(Number(value))}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                        <SelectItem key={select.collection.getItemValue(item)}
+                                    item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot></Field.Root>
+                </Flex>
+                <Flex align="center" gap="1" ml="auto">
+                    <Button size="sm" variant="ghost" disabled={disabled || !undo.length}
+                            onClick={handleButtonClick}>{t("Undo")}</Button>
+                    <Button size="sm" variant="ghost" disabled={disabled || !redo.length}
+                            onClick={handleButtonClick2}>{t("Retry")}</Button>
+                </Flex>
+            </Flex>
+            <Box className="ui-editor-toolbar" px="3" py="2" bg="bg.subtle" borderTopWidth="1px" borderBottomWidth="1px"
+                 role="group" aria-label={t("Alignment and borders")}>
+                <Box className="ui-ribbon-group" role="group" aria-label={t("Align relative to the window")}>
+                    <Box className="ui-ribbon-buttons">
+                        {(['x', 'y'] as const).map(axis => <Box className="ui-ribbon-cluster" key={axis}>
                             {(['start', 'center', 'end'] as const).map((position, index) => {
                                 const label = axis === 'x'
-                                    ? ['По левому краю', 'По центру горизонтально', 'По правому краю'][index]
-                                    : ['По верхнему краю', 'По центру вертикально', 'По нижнему краю'][index];
-                                return <button key={position} className="ui-ribbon-button"
-                                               title={label + (selected?.parentElement?.tagName.toUpperCase() === 'DIV' ? ' — содержимое DIV' : ' относительно окна')}
+                                    ? [t("Align left"), t("Center horizontally"), t("Align right")][index]
+                                    : [t("Align top"), t("Center vertically"), t("Align bottom")][index];
+                                return <Button key={position} className="ui-ribbon-button"
+                                               title={label + (selected?.parentElement?.tagName.toUpperCase() === 'DIV' ? t(" — DIV content") : t(" relative to the window"))}
                                                aria-label={label} disabled={disabled || !isControl}
                                                onClick={() => align(axis, position)}>
                                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -346,28 +493,29 @@ export function InterfaceEditor({
                                                                                    fill="currentColor"/>)}
                                         </g>
                                     </svg>
-                                </button>;
+                                </Button>;
                             })}
-                        </div>)}
-                    </div>
-                    <small>{selected?.parentElement?.tagName.toUpperCase() === 'DIV' ? 'Содержимое DIV' : 'Выравнивание по окну'}</small>
-                </div>
-                <div className="ui-ribbon-group" role="group" aria-label="Якорь привязки к сетке">
-                    <div className="ui-grid-anchor">
+                        </Box>)}
+                    </Box>
+                    <small>{selected?.parentElement?.tagName.toUpperCase() === 'DIV' ? t("DIV content") : t("Window alignment")}</small>
+                </Box>
+                <Box className="ui-ribbon-group" role="group" aria-label={t("Grid snap anchor")}>
+                    <Box className="ui-grid-anchor">
                         {[0, 0.5, 1].flatMap((y, row) => [0, 0.5, 1].map((x, column) => {
-                            const label = [['Верхний левый', 'Верхний центр', 'Верхний правый'], ['Середина слева', 'Центр', 'Середина справа'], ['Нижний левый', 'Нижний центр', 'Нижний правый']][row][column];
-                            return <button key={x + ':' + y} className="ui-ribbon-button"
-                                           aria-label={'Якорь: ' + label} title={'Якорь сетки: ' + label}
+                            const label = [[t("Top left"), t("Top center"), t("Top right")], [t("Middle left"), t("Center"), t("Middle right")], [t("Bottom left"), t("Bottom center"), t("Bottom right")]][row][column];
+                            return <Button key={x + ':' + y} className="ui-ribbon-button"
+                                           aria-label={"Anchor: " + label} title={"Grid anchor: " + label}
                                            aria-pressed={gridAnchor[0] === x && gridAnchor[1] === y}
-                                           onClick={() => setGridAnchor([x, y])}>•</button>;
+                                           onClick={() => setGridAnchor([x, y])}>•</Button>;
                         }))}
-                    </div>
-                    <small>Якорь сетки</small>
-                </div>
-                <div className="ui-ribbon-group" role="group" aria-label="Видимость рамок">
-                    <div className="ui-ribbon-buttons">
-                        <button className="ui-ribbon-button" aria-pressed={borders} aria-label="Рамки всех элементов"
-                                title="Показать / скрыть рамки всех элементов" onClick={() => {
+                    </Box>
+                    <small>{t("Grid anchor")}</small>
+                </Box>
+                <Box className="ui-ribbon-group" role="group" aria-label={t("Border visibility")}>
+                    <Box className="ui-ribbon-buttons">
+                        <Button className="ui-ribbon-button" aria-pressed={borders}
+                                aria-label={t("All element borders")}
+                                title={t("Show / hide all element borders")} onClick={() => {
                             setBorders(!borders);
                             setBorderOverrides({});
                         }}>
@@ -378,16 +526,11 @@ export function InterfaceEditor({
                                 <rect x="3" y="14" width="7" height="7"/>
                                 <rect x="14" y="14" width="7" height="7"/>
                             </svg>
-                        </button>
-                        <button className="ui-ribbon-button" aria-pressed={selectedBorder} disabled={!isControl}
-                                aria-label="Рамка выбранного элемента"
-                                title="Показать / скрыть рамку выбранного элемента"
-                                onClick={() => {
-                                    if (selected) setBorderOverrides(old => ({
-                                        ...old,
-                                        [borderKey(selected)]: !selectedBorder
-                                    }));
-                                }}>
+                        </Button>
+                        <Button className="ui-ribbon-button" aria-pressed={selectedBorder} disabled={!isControl}
+                                aria-label={t("Selected element border")}
+                                title={t("Show / hide the selected element border")}
+                                onClick={handleButtonClick3}>
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                  strokeWidth="1.5" aria-hidden="true">
                                 <rect x="5" y="5" width="14" height="14" strokeDasharray="3 2"/>
@@ -395,28 +538,45 @@ export function InterfaceEditor({
                                                                              height="4" fill="currentColor"
                                                                              stroke="none"/>))}
                             </svg>
-                        </button>
-                    </div>
-                    <small>Рамки элементов</small>
-                </div>
-            </div>
-            <div className="ui-editor-workspace">
-                <aside className="ui-editor-tree" style={{width: treeWidth}} aria-label="Структура интерфейса">
+                        </Button>
+                    </Box>
+                    <small>{t("Element borders")}</small>
+                </Box>
+            </Box>
+            <Box className="ui-editor-workspace">
+                <aside className="ui-editor-tree" style={{width: treeWidth}} aria-label={t("Interface structure")}
+                       onContextMenu={event => {
+                           if (event.defaultPrevented) return;
+                           event.preventDefault();
+                           setSelection(nodes.indexOf(root!));
+                           setCreateMenu(false);
+                           setMenu({x: event.clientX, y: event.clientY, element: false});
+                       }}>
                     <XmlTree onMove={disabled ? undefined : (source, target, inside) => {
                         const element = nodes[source], destination = nodes[target];
                         const parent = inside ? destination : destination?.parentElement;
                         if (!element || !parent || destination === element || element.contains(parent) || !(parent === root || parent.tagName.toUpperCase() === 'DIV') || !types.includes(element.tagName.toUpperCase())) return;
-                        parent.insertBefore(element, inside ? null : destination);
+                        const moved = (selections.includes(source) ? selections : [source]).map(index => nodes[index]).filter(node => node && types.includes(node.tagName.toUpperCase()));
+                        const top = moved.filter(node => !moved.some(other => other !== node && other.contains(node)));
+                        if (top.some(node => node === parent || node.contains(parent) || node === destination)) return;
+                        for (const node of top) parent.insertBefore(node, inside ? null : destination);
+                        const reordered = Array.from(doc.getElementsByTagName('*'));
+                        setSelections(moved.map(node => reordered.indexOf(node)));
                         setSelection(Array.from(doc.getElementsByTagName('*')).indexOf(element));
                         commit();
                     }} hiddenElements={hiddenElements}
                              onToggleVisibility={name => setHiddenElements(old => old.includes(name) ? old.filter(n => n !== name) : [...old, name])}
-                             doc={doc} selection={selection} onOpen={openDialog} onSelect={index => {
+                             doc={doc} selection={selection} selections={selections} onSelections={setSelections}
+                             onOpen={openDialog} onSelect={index => {
                         setSelection(index);
                         setRename(null);
-                    }} onContext={(_, x, y) => setMenu({x, y})}/>
+                    }} onContext={(index, x, y) => {
+                        setSelection(index);
+                        setCreateMenu(false);
+                        setMenu({x, y, element: true});
+                    }}/>
                 </aside>
-                <div className="ui-panel-splitter" role="separator" aria-label="Ширина дерева"
+                <Box className="ui-panel-splitter" role="separator" aria-label={t("Tree width")}
                      aria-orientation="vertical" onPointerDown={e => resizePanel(e, 'tree')}/>
                 <section className="ui-editor-canvas"><InterfacePreview fileName={fileName} text={text}
                                                                         entries={entries} initialZoom={zoom}
@@ -425,157 +585,92 @@ export function InterfaceEditor({
                                                                         borderOverrides={borderOverrides}
                                                                         gridAnchor={gridAnchor}
                                                                         onZoom={setZoom} selection={selection}
-                                                                        onSelect={setSelection} onOpen={openDialog}
-                                                                        disabled={disabled} grid={snap ? grid : 1}
-                                                                        onGeometry={(index, values) => {
-                                                                            if (disabled || !nodes[index]) return;
-                                                                            for (const [key, value] of Object.entries(values)) nodes[index].setAttribute(key, String(value));
+                                                                        selections={selections}
+                                                                        onSelections={setSelections}
+                                                                        onSelect={index => {
                                                                             setSelection(index);
-                                                                            commit();
-                                                                        }}/></section>
-                <div className="ui-panel-splitter" role="separator" aria-label="Ширина свойств"
+                                                                        }} onOpen={openDialog}
+                                                                        disabled={disabled} grid={snap ? grid : 1}
+                                                                        onGeometry={handleInterfacePreviewGeometry}/>
+                </section>
+                <Box className="ui-panel-splitter" role="separator" aria-label={t("Properties width")}
                      aria-orientation="vertical" onPointerDown={e => resizePanel(e, 'properties')}/>
                 <aside className="ui-editor-properties" style={{width: propertiesWidth}}>
-                    <strong>{selected?.tagName} · Свойства</strong>
-                    <p>Все XML-атрибуты, включая ресурсы и команды. Enter или потеря фокуса — применить.</p>
+                    <strong>{selected?.tagName} {t(" · Properties")}</strong>
                     {selected?.tagName.toUpperCase() === 'DIV' && <fieldset>
-                        <legend>Flex контейнер</legend>
-                        <p>При автосайзе размер равен содержимому. Для выравнивания в свободном пространстве отключите
-                            автосайз и задайте Width/Height.</p>
-                        <label>Направление<select disabled={disabled}
-                                                  value={selected.getAttribute('Direction') ?? 'row'}
-                                                  onChange={e => change('Direction', e.target.value)}>
-                            <option value="row">Горизонтально</option>
-                            <option value="column">Вертикально</option>
-                        </select></label>
-                        <EditorSwitch label="Размер по детям" showLabel disabled={disabled}
+                        <legend>{t("Flex container")}</legend>
+                        <p>{t("Auto size follows the content. To align within free space, disable auto size and set Width/Height.")}</p>
+                        <Field.Root width="auto"><Field.Label>{t("Direction")}</Field.Label><SelectRoot size="sm"
+                                                                                                        lazyMount
+                                                                                                        unmountOnExit
+                                                                                                        minW="140px"
+                                                                                                        collection={selectCollection(<>
+                                                                                                            <option
+                                                                                                                value="row">{t("Horizontal")}</option>
+                                                                                                            <option
+                                                                                                                value="column">{t("Vertical")}</option>
+                                                                                                        </>)}
+                                                                                                        value={[String(selected.getAttribute('Direction') ?? 'row')]}
+                                                                                                        onValueChange={async ({value: [value]}) => change('Direction', value)}
+                                                                                                        disabled={disabled}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                            <SelectItem key={select.collection.getItemValue(item)}
+                                        item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot></Field.Root>
+                        <EditorSwitch label={t("Size to content")} showLabel disabled={disabled}
                                       checked={selected.getAttribute('AutoSize') !== 'false'}
                                       change={checked => change('AutoSize', String(checked))}/>
-                        {['HorizontalAlign', 'VerticalAlign'].map(key => <label key={key}>{key}<select
-                            disabled={disabled} value={selected.getAttribute(key) ?? '0'}
-                            onChange={e => change(key, e.target.value)}>
-                            <option value="0">Начало</option>
-                            <option value="1">Центр</option>
-                            <option value="2">Конец</option>
-                        </select></label>)}
-                        {['Gap', 'Padding'].map(key => <label key={key}>{key}<input key={text + key} type="number"
-                                                                                    min="0" disabled={disabled}
-                                                                                    defaultValue={selected.getAttribute(key) ?? '0'}
-                                                                                    onBlur={e => {
-                                                                                        if (e.target.value && Number(e.target.value) >= 0) change(key, e.target.value);
-                                                                                    }}/></label>)}
+                        {['HorizontalAlign', 'VerticalAlign'].map(key => <Field.Root width="auto"
+                                                                                     key={key}><Field.Label>{t(key)}</Field.Label><SelectRoot
+                            size="sm" lazyMount unmountOnExit minW="140px" collection={selectCollection(<>
+                            <option value="0">{t("Start")}</option>
+                            <option value="1">{t("Center")}</option>
+                            <option value="2">{t("End")}</option>
+                        </>)} value={[String(selected.getAttribute(key) ?? '0')]}
+                            onValueChange={async ({value: [value]}) => change(key, value)}
+                            disabled={disabled}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                            <SelectItem key={select.collection.getItemValue(item)}
+                                        item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot></Field.Root>)}
+                        {['Gap', 'Padding'].map(key => <Field.Root width="auto"
+                                                                   key={key}><Field.Label>{t(key)}</Field.Label><Input
+                            key={text + key} type="number"
+                            min="0" disabled={disabled}
+                            defaultValue={selected.getAttribute(key) ?? '0'}
+                            onBlur={e => {
+                                if (e.target.value && Number(e.target.value) >= 0) change(key, e.target.value);
+                            }}/></Field.Root>)}
                     </fieldset>}
+                    {error && <Alert.Root status="error" size="sm"
+                                          role="alert"><Alert.Indicator/><Alert.Content>{message(error)}</Alert.Content></Alert.Root>}
                     {isControl && <fieldset>
-                        <legend>Основные параметры</legend>
-                        {(() => {
-                            const tag = selected.tagName.toUpperCase();
-                            if (!['LABEL', 'EDIT', 'LIST', 'COMBO', 'CHECK', 'RADIO', 'VERTICALTEXT'].includes(tag)) return null;
-                            const attribute = tag === 'EDIT' ? 'TextAlign' : 'Align';
-                            const vertical = tag === 'LIST';
-                            const labels = vertical ? ['Сверху', 'По центру', 'Снизу'] : ['Слева', 'По центру', 'Справа'];
-                            const fallback = ['CHECK', 'RADIO'].includes(tag) ? '1' : tag === 'VERTICALTEXT' ? '2' : '0';
-                            return <div className="ui-property-align">
-                                <span>{attribute}{vertical ? ' · по вертикали' : ''}</span>
-                                <div className="ui-ribbon-buttons" role="group"
-                                     aria-label={vertical ? 'Вертикальное выравнивание текста' : 'Выравнивание текста'}>
-                                    {labels.map((label, index) => <button type="button" key={index}
-                                                                          className="ui-ribbon-button"
-                                                                          title={label} aria-label={label}
-                                                                          disabled={disabled}
-                                                                          aria-pressed={(selected.getAttribute(attribute) ?? fallback) === String(index)}
-                                                                          onClick={() => change(attribute, String(index))}>
-                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                                            <g transform={vertical ? 'translate(24 0) rotate(90)' : undefined}>
-                                                {[16, 10, 16, 10].map((width, row) => <path key={row}
-                                                                                            d={`M${index === 0 ? 4 : index === 1 ? 12 - width / 2 : 20 - width} ${5 + row * 4}h${width}`}
-                                                                                            stroke="currentColor"
-                                                                                            strokeWidth="1.7"
-                                                                                            strokeLinecap="round"/>)}
-                                            </g>
-                                        </svg>
-                                    </button>)}
-                                </div>
-                            </div>;
-                        })()}
-                        {['x', 'y', 'Width', 'Height', 'TextOffsetX', 'TextOffsetY', 'Command'].map(name => <label
-                            key={selection + ':' + name + ':' + text}>{name}<input disabled={disabled}
-                                                                                   defaultValue={selected.getAttribute(name) ?? ''}
-                                                                                   placeholder="Не задано"
-                                                                                   onBlur={e => {
-                                                                                       if (e.target.value && e.target.value !== selected.getAttribute(name)) change(name, e.target.value);
-                                                                                   }} onKeyDown={e => {
-                            if (e.key === 'Enter') e.currentTarget.blur();
-                        }}/></label>)}
+                        <legend>{t("Position in tree")}</legend>
+                        <SelectRoot size="sm" lazyMount unmountOnExit minW="140px"
+                                    collection={selectCollection(<>{nodes.filter(n => (n === root || n.tagName.toUpperCase() === 'DIV') && n !== selected && !selected.contains(n)).map(n =>
+                                        <option key={nodes.indexOf(n)}
+                                                value={nodes.indexOf(n)}>{n.getAttribute('Name') ?? n.tagName}</option>)}</>)}
+                                    value={[String(nodes.indexOf(selected.parentElement!))]}
+                                    onValueChange={handleSelectRootValueChange} aria-label={t("Element parent")}
+                                    disabled={disabled}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                            <SelectItem key={select.collection.getItemValue(item)}
+                                        item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot>
+                        <Button disabled={disabled || !selected.previousElementSibling}
+                                onClick={handleButtonClick4}>{t("↑ Move up")}</Button>
+                        <Button disabled={disabled || !selected.nextElementSibling}
+                                onClick={handleButtonClick5}>{t("↓ Move down")}</Button>
                     </fieldset>}
-                    {error && <p role="alert">{error}</p>}
-                    {isControl && <fieldset>
-                        <legend>Положение в дереве</legend>
-                        <select aria-label="Родитель элемента" disabled={disabled}
-                                value={nodes.indexOf(selected.parentElement!)} onChange={e => {
-                            const parent = nodes[Number(e.target.value)];
-                            if (!parent || parent === selected || selected.contains(parent)) return;
-                            parent.appendChild(selected);
-                            setSelection(Array.from(doc.getElementsByTagName('*')).indexOf(selected));
-                            commit();
-                        }}>{nodes.filter(n => (n === root || n.tagName.toUpperCase() === 'DIV') && n !== selected && !selected.contains(n)).map(n =>
-                            <option key={nodes.indexOf(n)}
-                                    value={nodes.indexOf(n)}>{n.getAttribute('Name') ?? n.tagName}</option>)}</select>
-                        <button disabled={disabled || !selected.previousElementSibling} onClick={() => {
-                            selected.parentElement!.insertBefore(selected, selected.previousElementSibling);
-                            setSelection(Array.from(doc.getElementsByTagName('*')).indexOf(selected));
-                            commit();
-                        }}>↑ Выше
-                        </button>
-                        <button disabled={disabled || !selected.nextElementSibling} onClick={() => {
-                            const next = selected.nextElementSibling;
-                            if (next) selected.parentElement!.insertBefore(next, selected);
-                            setSelection(Array.from(doc.getElementsByTagName('*')).indexOf(selected));
-                            commit();
-                        }}>↓ Ниже
-                        </button>
-                    </fieldset>}
-                    {selected && Array.from(selected.attributes).filter(a => {
-                        const name = a.name.toLowerCase();
-                        if (name === 'fontname') return false;
-                        if (isControl && ['x', 'y', 'width', 'height', 'textoffsetx', 'textoffsety', 'command'].includes(name)) return false;
-                        const tag = selected.tagName.toUpperCase();
-                        if (tag === 'DIV' && ['direction', 'autosize', 'horizontalalign', 'verticalalign', 'gap', 'padding'].includes(name)) return false;
-                        if (isControl && ['LABEL', 'EDIT', 'LIST', 'COMBO', 'CHECK', 'RADIO', 'VERTICALTEXT'].includes(tag) && name === (tag === 'EDIT' ? 'textalign' : 'align')) return false;
-                        return true;
-                    }).map(a => <label
-                        key={`${selection}:${a.name}:${a.value}`}>{a.name}<input disabled={disabled}
-                                                                                 defaultValue={a.value} onBlur={e => {
-                        if (e.target.value !== a.value) change(a.name, e.target.value);
-                    }} onKeyDown={e => {
-                        if (e.key === 'Enter') e.currentTarget.blur();
-                    }}/></label>)}
-                    {selected && (selected.hasAttribute('FontName') || selected.tagName.toUpperCase() === 'TEXT') &&
-                        <label>FontName
-                            <select aria-label="Шрифт" disabled={disabled}
-                                    value={canonicalFontName(selected.getAttribute('FontName') ?? 'text')}
-                                    onChange={e => change('FontName', e.target.value)}>
-                                {UI_FONTS.map(font => <option key={font.name} value={font.name}>{font.name}</option>)}
-                                {selected.getAttribute('FontName') && !UI_FONTS.some(font => font.name === canonicalFontName(selected.getAttribute('FontName')!)) &&
-                                    <option
-                                        value={selected.getAttribute('FontName')!}>{selected.getAttribute('FontName')}</option>}
-                            </select>
-                        </label>}
-                    {selected && <form key={selection} onSubmit={e => {
-                        e.preventDefault();
-                        const data = new FormData(e.currentTarget);
-                        const name = String(data.get('name') ?? '').trim();
-                        if (!/^[A-Za-z_][\w.-]*$/.test(name)) {
-                            setError('Недопустимое имя атрибута');
-                            return;
-                        }
-                        change(name, String(data.get('value') ?? ''));
-                    }}><input name="name" placeholder="Новый атрибут" required disabled={disabled}/><input name="value"
-                                                                                                           placeholder="Значение"
-                                                                                                           disabled={disabled}/>
-                        <button disabled={disabled}>Добавить</button>
-                    </form>}
+                    {selected &&
+                        <InterfaceProperties allowMono={lrpw} element={selected} disabled={disabled} change={change}/>}
+                    {selected &&
+                        <form key={selection} onSubmit={handleFormSubmit2}><Field.Root width="auto"><Input name="name"
+                                                                                                           placeholder={t("New attribute")}
+                                                                                                           required
+                                                                                                           disabled={disabled}/></Field.Root><Field.Root
+                            width="auto"><Input
+                            name="value"
+                            placeholder={t("Value")}
+                            disabled={disabled}/></Field.Root>
+                            <Button disabled={disabled}>{t("Add")}</Button>
+                        </form>}
                 </aside>
-            </div>
-        </div>
+            </Box>
+        </Box>
     </GameFonts.Provider>;
 }

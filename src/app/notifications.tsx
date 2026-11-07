@@ -1,6 +1,11 @@
+import {t} from "../i18n";
 import {Box, createToaster, Portal, Toast, Toaster} from '@chakra-ui/react';
 
-export const notifications = createToaster({placement: 'bottom', offsets: {left:'12px',right:'12px',top:'12px',bottom:'32px'}, pauseOnPageIdle: true});
+export const notifications = createToaster({
+    placement: 'bottom',
+    offsets: {left: '12px', right: '12px', top: '12px', bottom: '32px'},
+    pauseOnPageIdle: true
+});
 
 export function ForgeToasts() {
     return <Portal>
@@ -11,7 +16,7 @@ export function ForgeToasts() {
                     {toast.title && <Toast.Title>{toast.title}</Toast.Title>}
                     {toast.description && <Toast.Description>{toast.description}</Toast.Description>}
                 </Box>
-                <Toast.CloseTrigger aria-label="Закрыть уведомление">×</Toast.CloseTrigger>
+                <Toast.CloseTrigger aria-label={t("Dismiss notification")}>×</Toast.CloseTrigger>
             </Toast.Root>}
         </Toaster>
     </Portal>;

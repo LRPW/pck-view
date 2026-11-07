@@ -12,10 +12,27 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
+static BUILD_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static BUILD_CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+thread_local! { static BUILD_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+pub(super) fn build_checkpoint() -> Result<()> {
+    if BUILD_THREAD.with(|v| v.get()) && BUILD_CANCEL.load(std::sync::atomic::Ordering::SeqCst) { return Err("Build cancelled".into()); }
+    Ok(())
+}
+#[tauri::command]
+pub fn project_cancel_build() { BUILD_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst); }
 #[derive(Serialize, Deserialize)]
 pub struct Project {
     format: String,
     version: u32,
+    #[serde(default = "default_client_version")]
+    client_version: String,
+    #[serde(default)]
+    gshop_version: Option<u8>,
+    #[serde(default)]
+    elements_profile: Option<super::elements::ElementsProfile>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    detected_gshop_versions: BTreeMap<String, u8>,
     name: String,
     source: String,
     archives: Vec<String>,
@@ -59,11 +76,13 @@ pub(super) fn catalog(
             fs::metadata(edits.join(rel)).map_err(err)?.len(),
         );
     }
-    let data = managed(&root, "originals", Path::new("data"))?;
+    for section in ["data", "server"] {
+    let data = managed(&root, "originals", Path::new(section))?;
+    if !data.is_dir() { continue; }
     let mut files = Vec::new();
     collect_files(&data, &data, &mut files)?;
     for rel in files {
-        let path = format!("data/{}", normal(&rel.to_string_lossy()));
+        let path = format!("{section}/{}", normal(&rel.to_string_lossy()));
         let edit = managed(&root, "edits", &archive_relative(&path)?)?;
         out.push(CatalogItem {
             name: path.clone(),
@@ -77,6 +96,7 @@ pub(super) fn catalog(
             .len(),
             changed: edit.is_file(),
         });
+    }
     }
     for (position, name) in p.archives.iter().enumerate() {
         progress(name, position, p.archives.len());
@@ -92,7 +112,7 @@ pub(super) fn catalog(
             });
         }
     }
-    progress("Подготовка дерева", 0, 0);
+    progress("Preparing tree", 0, 0);
     Ok(out)
 }
 pub(super) fn native_root(manifest: &str) -> Result<PathBuf> {
@@ -161,17 +181,17 @@ fn is_bug_archive(path: &str) -> bool {
 fn load(path: &Path) -> Result<Project> {
     reject_link(path)?;
     if fs::metadata(path).map_err(err)?.len() > 1024 * 1024 {
-        return Err("Некорректный проект".into());
+        return Err("Invalid project".into());
     }
     let mut p: Project = serde_json::from_slice(&fs::read(path).map_err(err)?).map_err(err)?;
     if p.format != "pw-forge-project" {
-        return Err("Это не проект PW Forge".into());
+        return Err("This is not a PW Forge project".into());
     }
     if p.version == 1 {
-        return Err("Этот проект использует старую полную распаковку. Создайте новый проект с индексами; старые файлы и правки не изменены.".into());
+        return Err("This project uses the old full-extraction format. Create a new indexed project; the old files and edits are preserved.".into());
     }
     if p.version != 2 {
-        return Err("Неподдерживаемая версия проекта".into());
+        return Err("Unsupported project version".into());
     }
     p.archives.retain(|name| !is_bug_archive(name));
     Ok(p)
@@ -179,7 +199,7 @@ fn load(path: &Path) -> Result<Project> {
 fn location(manifest: &str) -> Result<(PathBuf, Project)> {
     let path = PathBuf::from(manifest).canonicalize().map_err(err)?;
     let p = load(&path)?;
-    Ok((path.parent().ok_or("Нет папки проекта")?.to_path_buf(), p))
+    Ok((path.parent().ok_or("Project folder is missing")?.to_path_buf(), p))
 }
 fn safe(root: &Path, relative: &Path) -> Result<PathBuf> {
     reject_link(root)?;
@@ -187,7 +207,7 @@ fn safe(root: &Path, relative: &Path) -> Result<PathBuf> {
     for c in relative.components() {
         match c {
             std::path::Component::Normal(s) => p.push(s),
-            _ => return Err("Путь вне проекта".into()),
+            _ => return Err("Path is outside the project".into()),
         };
         if fs::symlink_metadata(&p).is_ok() {
             reject_link(&p)?;
@@ -199,7 +219,7 @@ fn managed(root: &Path, folder: &str, relative: &Path) -> Result<PathBuf> {
     safe(root, &Path::new(folder).join(relative))
 }
 fn atomic(path: &Path, b: &[u8]) -> Result<()> {
-    fs::create_dir_all(path.parent().ok_or("Нет каталога")?).map_err(err)?;
+    fs::create_dir_all(path.parent().ok_or("No directory")?).map_err(err)?;
     let mut f = tempfile::NamedTempFile::new_in(path.parent().unwrap()).map_err(err)?;
     f.write_all(b).map_err(err)?;
     f.as_file().sync_all().map_err(err)?;
@@ -219,11 +239,11 @@ fn make_index(disk: DiskIndex) -> Result<Index> {
             || *offset as u64 + (*packed as u64).min(*size)
                 > disk.stamp.size + disk.stamp.pkx.map(|p| p.0).unwrap_or(0)
         {
-            return Err("Некорректные размеры или смещения в индексе".into());
+            return Err("Invalid index sizes or offsets".into());
         }
         let path = normal(&archive_relative(name)?.to_string_lossy());
         if positions.insert(key(&path), i).is_some() {
-            return Err(format!("Повторяющийся путь: {name}"));
+            return Err(format!("Duplicate path: {name}"));
         }
     }
     for path in positions.keys() {
@@ -231,7 +251,7 @@ fn make_index(disk: DiskIndex) -> Result<Index> {
             .match_indices('/')
             .any(|(end, _)| positions.contains_key(&path[..end]))
         {
-            return Err(format!("Конфликт файла и папки: {path}"));
+            return Err(format!("File/directory conflict: {path}"));
         }
     }
     Ok(Index {
@@ -349,7 +369,7 @@ fn virtual_archive<'a>(p: &'a Project, path: &str) -> Result<Option<(&'a str, St
             }
         }
     }
-    Err("Архив отсутствует в проекте".into())
+    Err("Archive is absent from the project".into())
 }
 fn canonical_virtual(root: &Path, p: &Project, path: &str) -> Result<String> {
     archive_relative(path)?;
@@ -358,15 +378,15 @@ fn canonical_virtual(root: &Path, p: &Project, path: &str) -> Result<String> {
         let i = *index
             .positions
             .get(&key(&entry))
-            .ok_or("Файл отсутствует в индексе")?;
+            .ok_or("File is absent from the index")?;
         return Ok(format!("archives/{}/{}", normal(name), index.entries[i].0));
     }
     let path = normal(path);
-    if !path.starts_with("data/") {
-        return Err("Неизвестный раздел проекта".into());
+    if !path.starts_with("data/") && !path.starts_with("server/") {
+        return Err("Unknown project section".into());
     }
     if !managed(root, "originals", &archive_relative(&path)?)?.is_file() {
-        return Err("Нет файла в проекте".into());
+        return Err("File is missing from the project".into());
     }
     Ok(path)
 }
@@ -384,7 +404,7 @@ pub(super) fn search_reader(manifest: &str) -> Result<impl FnMut(&str) -> Result
                 indexes.insert(name.to_owned(), get_index(&root, name, &|_, _, _| {})?);
             }
             let index = &indexes[name];
-            let position = *index.positions.get(&key(&entry)).ok_or("Нет файла")?;
+            let position = *index.positions.get(&key(&entry)).ok_or("No file")?;
             return read_indexed(&root, name, index, position);
         }
         fs::read(managed(&root, "originals", &relative)?).map_err(err)
@@ -394,7 +414,7 @@ pub(super) fn search_reader(manifest: &str) -> Result<impl FnMut(&str) -> Result
 fn read_indexed(root: &Path, name: &str, index: &Index, position: usize) -> Result<Vec<u8>> {
     let (entry_name, len, offset, packed) = &index.entries[position];
     if *len > 256 * 1024 * 1024 {
-        return Err("Лимит извлечения: 256 MiB на файл".into());
+        return Err("Extraction limit: 256 MiB per file".into());
     }
     let stored = Archive::read_at(&copied(root, name)?, *offset as u64, (*packed).min(*len as u32) as usize)?;
     let entry = super::Entry { raw: vec![], name: entry_name.clone(), len: *len as u32, offset: *offset, packed: *packed, data: None };
@@ -411,7 +431,7 @@ fn materialize_impl(manifest: &str, path: &str) -> Result<PathBuf> {
     }
     if let Some((name, entry)) = virtual_archive(&p, &path)? {
         let index = get_index(&root, name, &|_, _, _| {})?;
-        let i = *index.positions.get(&key(&entry)).ok_or("Нет файла")?;
+        let i = *index.positions.get(&key(&entry)).ok_or("No file")?;
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         index.stamp.hash(&mut hash);
         let cache_rel = archive_relative(&format!(
@@ -444,7 +464,7 @@ pub(super) fn store_edit(
     let path = canonical_virtual(&root, &p, path)?;
     let current = materialize_impl(manifest, &path)?;
     if fs::read(&current).map_err(err)? != expected {
-        return Err("Файл изменён другой программой. Откройте его заново.".into());
+        return Err("File was changed by another program. Reopen it.".into());
     }
     if expected == bytes {
         return Ok(current);
@@ -469,7 +489,7 @@ pub(super) fn store_edit(
 }
 #[tauri::command]
 pub async fn project_scan(source: String, app: tauri::AppHandle) -> Result<Vec<FileItem>> {
-    background(app, "Поиск архивов", move |_| {
+    background(app, "Find archives", move |_| {
         let source = PathBuf::from(source).canonicalize().map_err(err)?;
         let mut files = Vec::new();
         collect_files(&source, &source, &mut files)?;
@@ -500,29 +520,74 @@ pub async fn project_scan(source: String, app: tauri::AppHandle) -> Result<Vec<F
     })
     .await
 }
-fn create_project(
+fn default_client_version() -> String {
+    "1.5.5-lrpw".into()
+}
+
+pub(super) fn data_profiles(manifest: &str) -> Result<(Option<u8>, Option<super::elements::ElementsProfile>)> {
+    let project = location(manifest)?.1;
+    Ok((project.gshop_version, project.elements_profile))
+}
+
+pub(super) fn remember_gshop_version(manifest: &str, resource: &str, version: u8) -> Result<()> {
+    let _lock = IO.lock().map_err(err)?;
+    let path = PathBuf::from(manifest).canonicalize().map_err(err)?;
+    let mut project = load(&path)?;
+    if project.gshop_version.is_none() && project.detected_gshop_versions.get(resource) != Some(&version) {
+        project.detected_gshop_versions.insert(resource.into(), version);
+        write_manifest(&path, &project)?;
+    }
+    Ok(())
+}
+
+fn validate_client_version(version: &str) -> Result<()> {
+    match version {
+        "1.5.5" | "1.5.5-lrpw" => Ok(()),
+        _ => Err("Unsupported client version".into()),
+    }
+}
+
+#[tauri::command]
+pub fn project_set_client_version(manifest: String, client_version: String, gshop_version: Option<u8>, elements_profile: Option<super::elements::ElementsProfile>) -> Result<()> {
+    validate_client_version(&client_version)?;
+    if gshop_version.is_some_and(|version| version > 7) { return Err("Unsupported GShop version".into()); }
+    if let Some(profile) = &elements_profile {
+        super::elements::validate_elements_profile(profile)?;
+    }
+    let _lock = IO.lock().map_err(err)?;
+    let path = PathBuf::from(manifest).canonicalize().map_err(err)?;
+    let mut project = load(&path)?;
+    project.client_version = client_version;
+    project.gshop_version = gshop_version;
+    project.elements_profile = elements_profile;
+    write_manifest(&path, &project)
+}
+
+pub(super) fn create_project(
     source: String,
     parent: String,
     name: String,
     archives: Vec<String>,
+    client_version: String,
     progress: &dyn Fn(&str, usize, usize),
 ) -> Result<ProjectView> {
+    validate_client_version(&client_version)?;
     let archives: Vec<_> = archives.into_iter().filter(|path| !is_bug_archive(path)).collect();
     let name = name.trim();
     if name.is_empty() || name.len() > 100 || name.contains(['\\', '/']) {
-        return Err("Укажите имя проекта без разделителей пути".into());
+        return Err("Specify a project name without path separators".into());
     }
     archive_relative(name)?;
     let source = PathBuf::from(source).canonicalize().map_err(err)?;
     let parent = PathBuf::from(parent).canonicalize().map_err(err)?;
     let directory = parent.join(name);
     if directory.starts_with(&source) || source.starts_with(&directory) {
-        return Err("Папка проекта должна находиться отдельно от клиента".into());
+        return Err("The project folder must be separate from the client".into());
     }
     let mut seen = HashSet::new();
     for name in &archives {
         if !seen.insert(key(name)) {
-            return Err("Архив выбран дважды".into());
+            return Err("Archive was selected twice".into());
         }
         let path = safe(&source, &archive_relative(name)?)?;
         if !path.is_file()
@@ -530,7 +595,7 @@ fn create_project(
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("pck"))
         {
-            return Err(format!("Нет архива {name}"));
+            return Err(format!("Missing archive {name}"));
         }
         let extra = path.with_extension("pkx");
         if extra.exists() {
@@ -551,6 +616,10 @@ fn create_project(
     let manifest = directory.join(format!("{name}.pwforge"));
     let mut project = Project {
         format: "pw-forge-project".into(),
+        client_version,
+        gshop_version: None,
+        elements_profile: None,
+        detected_gshop_versions: BTreeMap::new(),
         version: 2,
         name: name.into(),
         source: source.to_string_lossy().into(),
@@ -569,7 +638,7 @@ fn create_project(
                 fs::create_dir_all(target.parent().unwrap()).map_err(err)?;
                 fs::copy(data.join(rel), target).map_err(err)?;
                 progress(
-                    &format!("Копирование data/{}", rel.display()),
+                    &format!("Copying data/{}", rel.display()),
                     i + 1,
                     files.len(),
                 );
@@ -597,7 +666,7 @@ fn create_project(
             let to = copied(&directory, name)?;
             fs::create_dir_all(to.parent().unwrap()).map_err(err)?;
             progress(
-                &format!("Копирование {name} / PKX"),
+                &format!("Copying {name} / PKX"),
                 i,
                 project.archives.len(),
             );
@@ -608,7 +677,7 @@ fn create_project(
             }
             let index = get_index(&directory, name, progress)?;
             progress(
-                &format!("Индекс {name}: {} файлов", index.entries.len()),
+                &format!("Index {name}: {} files", index.entries.len()),
                 i + 1,
                 project.archives.len(),
             );
@@ -636,11 +705,12 @@ pub async fn project_create(
     parent: String,
     name: String,
     archives: Vec<String>,
+    client_version: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<ProjectView> {
-    background(app, "Импорт проекта", move |app| {
-        create_project(source, parent, name, archives, &|s, d, t| {
-            report(&app, "Импорт проекта", s, d, t)
+    background(app, "Import project", move |app| {
+        create_project(source, parent, name, archives, client_version.unwrap_or_else(default_client_version), &|s, d, t| {
+            report(&app, "Import project", s, d, t)
         })
     })
     .await
@@ -649,9 +719,9 @@ pub async fn project_create(
 pub fn project_open(path: String) -> Result<ProjectView> {
     let path = PathBuf::from(path).canonicalize().map_err(err)?;
     let project = load(&path)?;
-    let root = path.parent().ok_or("Нет папки")?;
+    let root = path.parent().ok_or("No folder")?;
     if !safe(root, Path::new("originals"))?.is_dir() {
-        return Err("Не найдены оригиналы проекта".into());
+        return Err("Project originals were not found".into());
     }
     Ok(ProjectView {
         manifest: path.to_string_lossy().into(),
@@ -672,7 +742,7 @@ pub fn project_startup() -> Option<String> {
 fn children_impl(manifest: &str, path: &str) -> Result<Vec<FileItem>> {
     let (root, p) = location(manifest)?;
     if path.is_empty() {
-        return Ok(["data", "archives"]
+        return Ok(["data", "server", "archives"]
             .iter()
             .map(|s| FileItem {
                 name: s.to_string(),
@@ -718,11 +788,12 @@ fn children_impl(manifest: &str, path: &str) -> Result<Vec<FileItem>> {
         }
         return Ok(result);
     }
-    if path != "data" && !path.starts_with("data/") {
-        return Err("Нет раздела".into());
+    if path != "data" && !path.starts_with("data/") && path != "server" && !path.starts_with("server/") {
+        return Err("No section".into());
     }
     let directory = managed(&root, "originals", &archive_relative(path)?)?;
     let mut result = Vec::new();
+    if !directory.exists() { return Ok(Vec::new()); }
     for entry in fs::read_dir(directory).map_err(err)? {
         let e = entry.map_err(err)?;
         reject_link(&e.path())?;
@@ -755,22 +826,22 @@ pub async fn project_children(
     path: String,
     app: tauri::AppHandle,
 ) -> Result<Vec<FileItem>> {
-    background(app, "Дерево проекта", move |_| {
+    background(app, "Project tree", move |_| {
         children_impl(&manifest, &path)
     })
     .await
 }
 #[tauri::command]
 pub async fn project_path(manifest: String, path: String, app: tauri::AppHandle) -> Result<String> {
-    background(app, "Извлечение файла", move |_| {
+    background(app, "Extract file", move |_| {
         Ok(materialize(&manifest, &path)?.to_string_lossy().into())
     })
     .await
 }
-fn read_impl(manifest: &str, path: &str) -> Result<Vec<u8>> {
+pub(super) fn read_impl(manifest: &str, path: &str) -> Result<Vec<u8>> {
     let path = materialize(manifest, path)?;
     if fs::metadata(&path).map_err(err)?.len() > 8 * 1024 * 1024 {
-        return Err("Файл больше 8 MiB: используйте специализированный редактор".into());
+        return Err("File exceeds 8 MiB: use a specialized editor".into());
     }
     fs::read(path).map_err(err)
 }
@@ -780,7 +851,7 @@ pub async fn project_read(
     path: String,
     app: tauri::AppHandle,
 ) -> Result<Vec<u8>> {
-    background(app, "Извлечение файла", move |_| {
+    background(app, "Extract file", move |_| {
         read_impl(&manifest, &path)
     })
     .await
@@ -794,33 +865,40 @@ pub async fn project_write(
     original: Vec<u8>,
     app: tauri::AppHandle,
 ) -> Result<()> {
-    background(app, "Сохранение правки", move |_| {
+    background(app, "Saving edit", move |_| {
         store_edit(&manifest, &path, &original, &encode_text(text, encoding)?)?;
         Ok(())
     })
     .await
 }
-fn write_archive(
+pub(super) fn write_archive(
     archive: &Archive,
     target: &Path,
     overrides: &HashMap<usize, PathBuf>,
     progress: &dyn Fn(&str, usize, usize),
-) -> Result<()> {
+) -> Result<Archive> {
     let mut spool =
-        tempfile::NamedTempFile::new_in(target.parent().ok_or("Нет папки")?).map_err(err)?;
+        tempfile::NamedTempFile::new_in(target.parent().ok_or("No folder")?).map_err(err)?;
     let mut safe_header = vec![0; 12];
     put(&mut safe_header, 0, 0x4dca23ef);
     put(&mut safe_header, 8, 0x56a089b7);
     spool.write_all(&safe_header).map_err(err)?;
     let mut rows = Vec::new();
     for (i, e) in archive.entries.iter().enumerate() {
+        build_checkpoint()?;
         let offset = spool.stream_position().map_err(err)?;
-        let (packed, len) = if let Some(path) = overrides.get(&i) {
-            let d = fs::read(path).map_err(err)?;
+        let replacement = if let Some(path) = overrides.get(&i) {
+            Some(std::borrow::Cow::Owned(fs::read(path).map_err(err)?))
+        } else {
+            e.data.as_deref().map(std::borrow::Cow::Borrowed)
+        };
+        let (packed, len) = if let Some(d) = replacement {
             if d.len() > 256 * 1024 * 1024 {
-                return Err("Правка превышает лимит 256 MiB".into());
+                return Err("Edit exceeds the 256 MiB limit".into());
             }
-            let mut b = compress(&d)?;
+            let len = d.len() as u32;
+            let compressed = compress(&d)?;
+            let mut b = if compressed.len() < d.len() { compressed } else { d.into_owned() };
             if archive.encrypted {
                 let mask = (b.len() as u32).wrapping_add(0x739802ab);
                 for c in b.chunks_exact_mut(4) {
@@ -828,7 +906,7 @@ fn write_archive(
                     c.copy_from_slice(&v.rotate_right(16).to_be_bytes());
                 }
             }
-            (b, d.len() as u32)
+            (b, len)
         } else {
             (
                 Archive::read_at(&archive.path, e.offset as u64, e.packed.min(e.len) as usize)?,
@@ -836,7 +914,7 @@ fn write_archive(
             )
         };
         if offset + packed.len() as u64 > u32::MAX as u64 {
-            return Err("Архив превышает адресуемый размер 4 GiB".into());
+            return Err("Archive exceeds the 4 GiB addressable size".into());
         }
         spool.write_all(&packed).map_err(err)?;
         let mut row = e.raw.clone();
@@ -846,11 +924,12 @@ fn write_archive(
         put(&mut row, o + 8, packed.len() as u32);
         rows.push(row);
         if i % 128 == 0 || i + 1 == archive.entries.len() {
-            progress("Запись ресурсов", i + 1, archive.entries.len());
+            progress("Writing resources", i + 1, archive.entries.len());
         }
     }
     let table = u32::try_from(spool.stream_position().map_err(err)?).map_err(err)?;
     for (i, row) in rows.iter().enumerate() {
+        build_checkpoint()?;
         let b = compress(row)?;
         let n = b.len() as u32;
         spool
@@ -861,7 +940,7 @@ fn write_archive(
             .map_err(err)?;
         spool.write_all(&b).map_err(err)?;
         if i % 256 == 0 {
-            progress("Запись индекса PCK", i, rows.len());
+            progress("Writing PCK index", i, rows.len());
         }
     }
     let mut header = archive.header.clone();
@@ -876,52 +955,82 @@ fn write_archive(
     put(
         &mut safe_header,
         4,
-        u32::try_from(end).map_err(|_| "Выходной архив превышает 4 GiB")?,
+        u32::try_from(end).map_err(|_| "Output archive exceeds 4 GiB")?,
     );
     spool.seek(SeekFrom::Start(0)).map_err(err)?;
     spool.write_all(&safe_header).map_err(err)?;
     split_spool(spool.as_file_mut(), target, SPLIT)?;
-    progress("Проверка собранного архива", 0, overrides.len());
+    progress("Verifying built archive", 0, overrides.len());
     let checked = Archive::open_progress(target.to_path_buf(), &|_, _, _| {})?;
     if checked.entries.len() != archive.entries.len() {
-        return Err("Проверка количества записей не прошла".into());
+        return Err("Entry count verification failed".into());
     }
-    for (i, path) in overrides {
+    for (done, (i, path)) in overrides.iter().enumerate() {
+        build_checkpoint()?;
+        progress("Verifying built archive", done, overrides.len() + archive.entries.len());
         if checked.data(*i)? != fs::read(path).map_err(err)? {
             return Err(format!(
-                "Проверка записи {} не прошла",
+                "Entry {} verification failed",
                 archive.entries[*i].name
             ));
         }
     }
-    Ok(())
+    for (i, entry) in archive.entries.iter().enumerate() {
+        build_checkpoint()?;
+        if i % 256 == 0 { progress("Verifying built archive", overrides.len() + i, overrides.len() + archive.entries.len()); }
+        if let Some(data) = &entry.data {
+            if !overrides.contains_key(&i) && checked.data(i)? != *data {
+                return Err(format!("Entry {} verification failed", entry.name));
+            }
+        }
+    }
+    Ok(checked)
 }
 fn split_spool(spool: &mut File, target: &Path, boundary: u64) -> Result<()> {
     let end = spool.metadata().map_err(err)?.len();
     spool.seek(SeekFrom::Start(0)).map_err(err)?;
     let mut pck = File::create(target).map_err(err)?;
-    std::io::copy(&mut (&mut *spool).take(boundary), &mut pck).map_err(err)?;
+    copy_cancellable(&mut (&mut *spool).take(boundary), &mut pck)?;
     pck.sync_all().map_err(err)?;
     drop(pck);
     if end > boundary {
         let mut pkx = File::create(target.with_extension("pkx")).map_err(err)?;
-        std::io::copy(spool, &mut pkx).map_err(err)?;
+        copy_cancellable(spool, &mut pkx)?;
         pkx.sync_all().map_err(err)?;
     }
     Ok(())
+}
+fn copy_cancellable(reader: &mut impl Read, writer: &mut impl Write) -> Result<()> {
+    let mut buffer = vec![0u8; 1024 * 1024];
+    loop {
+        build_checkpoint()?;
+        let count = reader.read(&mut buffer).map_err(err)?;
+        if count == 0 { return Ok(()); }
+        writer.write_all(&buffer[..count]).map_err(err)?;
+    }
+}
+fn copy_build_file(from: &Path, to: &Path) -> Result<()> {
+    copy_cancellable(&mut File::open(from).map_err(err)?, &mut File::create(to).map_err(err)?)
 }
 #[derive(Serialize)]
 pub struct BuildResult {
     directory: String,
     archives: Vec<String>,
     loose_files: usize,
+    server_files: Vec<String>,
+    client_files: Vec<String>,
 }
-fn build_impl(manifest: &str, progress: &dyn Fn(&str, usize, usize)) -> Result<BuildResult> {
+pub(super) fn build_impl(manifest: &str, progress: &(dyn Fn(&str, usize, usize) + Sync)) -> Result<BuildResult> {
+    build_mode(manifest, false, 0, progress)
+}
+fn build_mode(manifest: &str, full: bool, threads: usize, progress: &(dyn Fn(&str, usize, usize) + Sync)) -> Result<BuildResult> {
     let _lock = IO.lock().map_err(err)?;
     let (root, p) = location(manifest)?;
     if p.status != "ready" {
-        return Err("Импорт проекта не завершён. Проверьте ошибки.".into());
+        return Err("Project import is incomplete. Check the errors.".into());
     }
+    build_checkpoint()?;
+    progress("Collecting project files", 0, 0);
     let edits_root = safe(&root, Path::new("edits"))?;
     let mut edits = Vec::new();
     collect_files(&edits_root, &edits_root, &mut edits)?;
@@ -942,36 +1051,113 @@ fn build_impl(manifest: &str, progress: &dyn Fn(&str, usize, usize)) -> Result<B
             let i = *index
                 .positions
                 .get(&key(&entry))
-                .ok_or("Правка отсутствует в индексе")?;
+                .ok_or("Edit is absent from the index")?;
             groups.entry(name.into()).or_default().insert(i, file);
         } else {
             loose.push((archive_relative(&canonical)?, file));
         }
     }
+    if full {
+        for name in &p.archives {
+            if !is_bug_archive(name) { groups.entry(name.clone()).or_default(); }
+        }
+        let existing: HashSet<_> = loose.iter().map(|(rel, _)| key(&rel.to_string_lossy())).collect();
+        for section in ["data", "server"] {
+            let source = managed(&root, "originals", Path::new(section))?;
+            if !source.is_dir() { continue; }
+            let mut files = Vec::new();
+            collect_files(&source, &source, &mut files)?;
+            for rel in files {
+                let target = Path::new(section).join(&rel);
+                if !existing.contains(&key(&target.to_string_lossy())) { loose.push((target, source.join(rel))); }
+            }
+        }
+    }
     if groups.is_empty() && loose.is_empty() {
-        return Err("Нет сохранённых правок для сборки".into());
+        return Err("There are no saved edits to build".into());
     }
     let staging = tempfile::Builder::new()
-        .prefix("build-")
-        .tempdir_in(safe(&root, Path::new(".forge"))?)
+        .prefix("pwforge-build-")
+        .tempdir()
         .map_err(err)?;
+    fs::create_dir_all(staging.path().join("server")).map_err(err)?;
+    fs::create_dir_all(staging.path().join("client")).map_err(err)?;
     let mut names: Vec<_> = groups.keys().cloned().collect();
     names.sort();
-    for name in &names {
-        let archive = Archive::open_progress(copied(&root, name)?, progress)?;
-        let target = staging.path().join(archive_relative(name)?);
+    let overall_total = (names.len() + loose.len() + 1) * 1000;
+    let mut overall_done = 0;
+    progress("__overall", overall_done, overall_total);
+    let workers = if threads == 0 { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) } else { threads.clamp(1, 32) }.min(names.len());
+    progress(&format!("Archive workers: {workers}"), 0, 0);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let amounts = Mutex::new(vec![0usize; names.len()]);
+    let failure = Mutex::new(None::<String>);
+    let cancellable = BUILD_THREAD.with(|v| v.get());
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for worker in 0..workers {
+            let (next, failure, amounts, names, root, staging, groups) = (&next, &failure, &amounts, &names, &root, &staging, &groups);
+            handles.push(scope.spawn(move || {
+                BUILD_THREAD.with(|v| v.set(cancellable));
+                loop {
+                    if failure.lock().unwrap().is_some() { break; }
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if index >= names.len() { break; }
+                    let name = &names[index];
+                    let stage = Mutex::new(String::from("Building archive"));
+                    let update = |amount: usize| {
+                        let mut values = amounts.lock().unwrap();
+                        values[index] = values[index].max(amount);
+                        progress("__overall", values.iter().sum(), overall_total);
+                        progress(&format!("__worker:{}:{}", worker + 1, serde_json::json!({"archive": name, "stage": *stage.lock().unwrap()})), values[index], 1000);
+                    };
+                    let result = (|| -> Result<()> {
+        build_checkpoint()?;
+        progress(&format!("Building client/{name}"), 0, 0);
+        let archive = Archive::open_progress(copied(&root, name)?, &|reading_stage, done, total| {
+            *stage.lock().unwrap() = reading_stage.into();
+            progress(&format!("{name}: {reading_stage}"), done, total);
+            if total > 0 { update(done.min(total) * 100 / total); }
+        })?;
+        let target = staging.path().join("client").join(archive_relative(name)?);
         fs::create_dir_all(target.parent().unwrap()).map_err(err)?;
         write_archive(&archive, &target, &groups[name], &|s, d, t| {
-            progress(&format!("{name}: {s}"), d, t)
+            *stage.lock().unwrap() = s.into();
+            progress(&format!("{name}: {s}"), d, t);
+            let (base, weight) = match s {
+                "Writing resources" => (100, 600),
+                "Writing PCK index" => (700, 150),
+                _ => (850, 150),
+            };
+            let fraction = if t > 0 { d.min(t) * weight / t } else { 0 };
+            update(base + fraction);
         })?;
-    }
-    for (rel, file) in &loose {
-        let target = staging.path().join(rel);
-        fs::create_dir_all(target.parent().unwrap()).map_err(err)?;
-        fs::copy(file, &target).map_err(err)?;
-        if fs::read(file).map_err(err)? != fs::read(target).map_err(err)? {
-            return Err("Проверка отдельного файла не прошла".into());
+
+                        *stage.lock().unwrap() = "Build complete".into();
+                        update(1000);
+                        Ok(())
+                    })();
+                    if let Err(error) = result { *failure.lock().unwrap() = Some(error); break; }
+                }
+                BUILD_THREAD.with(|v| v.set(false));
+            }));
         }
+        for handle in handles { if handle.join().is_err() { *failure.lock().unwrap() = Some("Archive worker failed".into()); } }
+    });
+    if let Some(error) = failure.into_inner().map_err(err)? { return Err(error); }
+    overall_done = names.len() * 1000;
+    for (rel, file) in &loose {
+        build_checkpoint()?;
+        let output = if rel.starts_with("server") { rel.clone() } else { Path::new("client").join(rel) };
+        progress(&format!("Copying {}", output.display()), 0, 0);
+        let target = staging.path().join(output);
+        fs::create_dir_all(target.parent().unwrap()).map_err(err)?;
+        copy_build_file(file, &target)?;
+        if fs::read(file).map_err(err)? != fs::read(target).map_err(err)? {
+            return Err("Loose file verification failed".into());
+        }
+        overall_done += 1000;
+        progress("__overall", overall_done, overall_total);
     }
     let builds = safe(&root, Path::new("builds"))?;
     fs::create_dir_all(&builds).map_err(err)?;
@@ -984,22 +1170,105 @@ fn build_impl(manifest: &str, progress: &dyn Fn(&str, usize, usize)) -> Result<B
         directory: destination.to_string_lossy().into(),
         archives: names,
         loose_files: loose.len(),
+        server_files: loose.iter().filter(|(rel, _)| rel.starts_with("server")).map(|(rel, _)| normal(&rel.to_string_lossy())).collect(),
+        client_files: loose.iter().filter(|(rel, _)| !rel.starts_with("server")).map(|(rel, _)| normal(&rel.to_string_lossy())).collect(),
     };
-    atomic(
+    fs::write(
         &staging.path().join("pwforge-build.json"),
         &serde_json::to_vec_pretty(&result).map_err(err)?,
-    )?;
-    fs::rename(staging.path(), &destination).map_err(err)?;
+    ).map_err(err)?;
+    build_checkpoint()?;
+    progress("Publishing build", 0, 0);
+    // System temp may be on a different volume. Copy into an unpublished
+    // directory on the destination volume, then publish with an atomic rename.
+    let publishing = tempfile::Builder::new().prefix(".publishing-").tempdir_in(&builds).map_err(err)?;
+    fs::create_dir_all(publishing.path().join("server")).map_err(err)?;
+    fs::create_dir_all(publishing.path().join("client")).map_err(err)?;
+    let mut output_files = Vec::new();
+    collect_files(staging.path(), staging.path(), &mut output_files)?;
+    for (index, rel) in output_files.iter().enumerate() {
+        build_checkpoint()?;
+        progress(&format!("Publishing {}", rel.display()), index, output_files.len());
+        progress("__overall", overall_done + index * 1000 / output_files.len().max(1), overall_total);
+        let target = publishing.path().join(rel);
+        fs::create_dir_all(target.parent().unwrap()).map_err(err)?;
+        copy_build_file(&staging.path().join(rel), &target)?;
+    }
+    build_checkpoint()?;
+    fs::rename(publishing.path(), &destination).map_err(err)?;
+    progress("__overall", overall_total, overall_total);
     Ok(result)
 }
 #[tauri::command]
-pub async fn project_build(manifest: String, app: tauri::AppHandle) -> Result<BuildResult> {
-    background(app, "Сборка проекта", move |app| {
-        build_impl(&manifest, &|s, d, t| {
-            report(&app, "Сборка проекта", s, d, t)
-        })
-    })
-    .await
+pub async fn project_build(manifest: String, full: Option<bool>, threads: Option<usize>, app: tauri::AppHandle) -> Result<BuildResult> {
+    if BUILD_ACTIVE.swap(true, std::sync::atomic::Ordering::SeqCst) { return Err("A build is already running".into()); }
+    BUILD_CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
+    let result = background(app, "Build project", move |app| {
+        BUILD_THREAD.with(|v| v.set(true));
+        let started = std::time::Instant::now();
+        let (root, _) = location(&manifest)?;
+        let log_dir = safe(&root, Path::new(".forge/logs"))?;
+        fs::create_dir_all(&log_dir).map_err(err)?;
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(err)?.as_nanos();
+        let log_path = log_dir.join(format!("build-{stamp}.log"));
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&log_path).map_err(err)?;
+        writeln!(file, "Build started: {stamp}\nProject: {manifest}\nFull build: {}\nThreads: {}", full.unwrap_or(false), threads.unwrap_or(0)).map_err(err)?;
+        file.sync_data().map_err(err)?;
+        let log = Mutex::new(file);
+        let log_error = Mutex::new(None::<String>);
+        report(&app, "Build project", &format!("Build log: {}", log_path.display()), 0, 0);
+        let result = build_mode(&manifest, full.unwrap_or(false), threads.unwrap_or(0), &|s, d, t| {
+            // Overall/worker events duplicate detailed stages and need not hit disk.
+            if !s.starts_with("__") {
+                let written = (|| -> Result<()> {
+                    let mut file = log.lock().map_err(err)?;
+                    writeln!(file, "[{:.3}s] {s} {d}/{t}", started.elapsed().as_secs_f64()).map_err(err)?;
+                    file.sync_data().map_err(err)
+                })();
+                if let Err(error) = written { *log_error.lock().unwrap() = Some(error); BUILD_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst); }
+            }
+            report(&app, "Build project", s, d, t);
+        });
+        BUILD_THREAD.with(|v| v.set(false));
+        {
+            let mut file = log.lock().map_err(err)?;
+            let status = match &result { Ok(_) => "Build complete".to_string(), Err(error) => format!("Build stopped: {error}") };
+            writeln!(file, "[{:.3}s] {status}", started.elapsed().as_secs_f64()).map_err(err)?;
+            file.sync_data().map_err(err)?;
+        }
+        if let Some(error) = log_error.into_inner().map_err(err)? { return Err(format!("Build log write failed: {error}")); }
+        if let Ok(ref built) = result {
+            fs::copy(&log_path, Path::new(&built.directory).join("build.log")).map_err(err)?;
+        }
+        result
+    }).await;
+    BUILD_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    result
+}
+#[tauri::command]
+pub async fn project_clean_builds(manifest: String, keep: usize, app: tauri::AppHandle) -> Result<usize> {
+    background(app, "Clean builds", move |_| {
+        let _lock = IO.lock().map_err(err)?;
+        let (root, _) = location(&manifest)?;
+        let builds = safe(&root, Path::new("builds"))?;
+        if !builds.exists() { return Ok(0); }
+        reject_link(&builds)?;
+        let base = builds.canonicalize().map_err(err)?;
+        let mut candidates = Vec::new();
+        for entry in fs::read_dir(&base).map_err(err)? {
+            let entry = entry.map_err(err)?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.parse::<u128>().is_err() || !entry.file_type().map_err(err)?.is_dir() { continue; }
+            let path = entry.path(); reject_link(&path)?;
+            let resolved = path.canonicalize().map_err(err)?;
+            if resolved.parent() != Some(base.as_path()) { return Err("Invalid build path".into()); }
+            if resolved.join("pwforge-build.json").is_file() { candidates.push((name.parse::<u128>().map_err(err)?, resolved)); }
+        }
+        candidates.sort_by(|a,b| b.0.cmp(&a.0));
+        let mut deleted=0;
+        for (_, path) in candidates.into_iter().skip(keep) { fs::remove_dir_all(path).map_err(err)?; deleted+=1; }
+        Ok(deleted)
+    }).await
 }
 #[tauri::command]
 pub fn project_register_association() -> Result<()> {
@@ -1032,7 +1301,7 @@ pub fn project_register_association() -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        Err("Ассоциация доступна в Windows".into())
+        Err("File association is available on Windows".into())
     }
 }
 #[cfg(test)]
@@ -1123,6 +1392,7 @@ mod tests {
             t.path().to_string_lossy().into(),
             "Test".into(),
             vec!["interfaces.pck".into()],
+            default_client_version(),
             &|_, _, _| {},
         )
         .unwrap();
@@ -1170,7 +1440,7 @@ mod tests {
         let output = build_impl(&p.manifest, &|_, _, _| {}).unwrap();
         assert_eq!(output.archives, vec!["interfaces.pck"]);
         assert_eq!(output.loose_files, 1);
-        let built = Archive::open(Path::new(&output.directory).join("interfaces.pck")).unwrap();
+        let built = Archive::open(Path::new(&output.directory).join("client/interfaces.pck")).unwrap();
         for (i, e) in built.entries.iter().enumerate() {
             if e.name.ends_with("test.xml") {
                 assert_eq!(built.data(i).unwrap(), b"<Dialog name=\"changed\"/>\r\n");
@@ -1179,7 +1449,7 @@ mod tests {
             }
         }
         assert_eq!(
-            fs::read(Path::new(&output.directory).join("data/config.ini")).unwrap(),
+            fs::read(Path::new(&output.directory).join("client/data/config.ini")).unwrap(),
             b"level=2\r\n"
         );
         assert_eq!(
@@ -1218,4 +1488,36 @@ mod tests {
             2
         );
     }
+}
+
+pub(super) fn import_server(manifest: &str, source: &Path) -> Result<()> {
+    let (root, _) = location(manifest)?;
+    let target = managed(&root, "originals", Path::new("server"))?;
+    if target.exists() { return Err("Server files have already been added to this project".into()); }
+    let source = source.canonicalize().map_err(err)?;
+    let mut files = Vec::new();
+    collect_files(&source, &source, &mut files)?;
+    if files.is_empty() { return Err("The server files folder is empty".into()); }
+    let staging = tempfile::Builder::new().prefix("server-import-")
+        .tempdir_in(safe(&root, Path::new(".forge"))?).map_err(err)?;
+    for relative in files {
+        let destination = staging.path().join(&relative);
+        if let Some(parent) = destination.parent() { fs::create_dir_all(parent).map_err(err)?; }
+        fs::copy(source.join(relative), destination).map_err(err)?;
+    }
+    fs::rename(staging.path(), target).map_err(err)?;
+    Ok(())
+}
+#[cfg(test)]
+#[test]
+fn build_copy_observes_cancellation() {
+    BUILD_THREAD.with(|v| v.set(true));
+    BUILD_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut source = std::io::Cursor::new(vec![1u8; 1024]);
+    let mut target = Vec::new();
+    let result = copy_cancellable(&mut source, &mut target);
+    BUILD_THREAD.with(|v| v.set(false));
+    BUILD_CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(result.unwrap_err(), "Build cancelled");
+    assert!(target.is_empty());
 }

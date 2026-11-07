@@ -1,11 +1,15 @@
-import {useEffect, useRef, useState} from 'react';
+import {ClientVersionField} from '../../app/ClientVersionField';
+import {matchesShortcut} from '../../app/shortcuts';
+import {message, sourceText, t} from "../../i18n";
+import {Alert, Box, Button, Field, Input, Switch} from "@chakra-ui/react";
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
 import {confirm, open} from '@tauri-apps/plugin-dialog';
-import {hasUnsavedEdits, useUnsavedGuard} from './unsaved';
+import {useEffect, useRef, useState} from 'react';
 import {TextEditor} from './TextEditor';
 import './elements.css';
 import './project.css';
+import {hasUnsavedEdits, useUnsavedGuard} from './unsaved';
 
 type Item = { name: string; path: string; directory: boolean; size: number; changed?: boolean };
 type Project = {
@@ -49,13 +53,13 @@ function Folder({manifest, item, onFile, onError}: {
         setExpanded(v => !v);
     }
 
-    return <div>
-        <button className="project-node" title={item.path}
-                onClick={() => void toggle()}>{item.directory ? (expanded ? '▾ ' : '▸ ') : '· '}{item.name}{item.changed ? ' ●' : ''}</button>
+    return <Box>
+        <Button className="project-node" title={item.path}
+                onClick={() => void toggle()}>{item.directory ? (expanded ? '▾ ' : '▸ ') : '· '}{item.name}{item.changed ? ' ●' : ''}</Button>
         {expanded &&
-            <div className="project-branch">{children?.map(c => <Folder key={c.path} manifest={manifest} item={c}
-                                                                        onFile={onFile} onError={onError}/>)}</div>}
-    </div>;
+            <Box className="project-branch">{children?.map(c => <Folder key={c.path} manifest={manifest} item={c}
+                                                                        onFile={onFile} onError={onError}/>)}</Box>}
+    </Box>;
 }
 
 export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
@@ -67,6 +71,7 @@ export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
     const [project, setProject] = useState<Project>();
     const [source, setSource] = useState('');
     const [parent, setParent] = useState('');
+    const [clientVersion, setClientVersion] = useState('1.5.5-lrpw');
     const [name, setName] = useState('My PW Project');
     const [archives, setArchives] = useState<Item[]>([]);
     const [selected, setSelected] = useState<string[]>([]);
@@ -81,13 +86,13 @@ export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
     const [hex, setHex] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
-    const [status, setStatus] = useState('Готово');
+    const [status, setStatus] = useState(t("Done"));
     const dirty = text !== saved;
     const unsaved = useRef(false);
     unsaved.current = dirty;
     const initial = useRef(false);
     const [buildResult, setBuildResult] = useState<{ directory: string; archives: string[]; loose_files: number }>();
-    useUnsavedGuard('проект', dirty || busy);
+    useUnsavedGuard(t("project"), dirty || busy);
 
     async function run(fn: () => Promise<void>) {
         setBusy(true);
@@ -102,7 +107,7 @@ export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
     }
 
     async function discard() {
-        return !dirty || confirm('Отбросить несохранённые изменения файла проекта?', {
+        return !dirty || confirm(t("Discard unsaved changes to the project file?"), {
             title: 'PW Forge',
             kind: 'warning'
         });
@@ -111,7 +116,7 @@ export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
     useEffect(() => {
         if (!visible) return;
         const handler = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+            if (matchesShortcut(e, 'save')) {
                 e.preventDefault();
                 if (!busy && editable && dirty) void saveFile();
             }
@@ -128,7 +133,7 @@ export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
         setText('');
         setSaved('');
         localStorage.setItem('pwforge:last-project', p.manifest);
-        setStatus(p.project.status === 'ready' ? 'Проект открыт' : 'Импорт завершён не полностью: ' + p.project.errors.join('; '));
+        setStatus(p.project.status === 'ready' ? t("Project opened") : "Import incomplete: " + p.project.errors.join('; '));
     }
 
     useEffect(() => {
@@ -141,7 +146,7 @@ export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
     }, []);
     useEffect(() => {
         const p = listen<{ operation: string; stage: string; completed: number; total: number }>('pck-progress', e => {
-            if (['Импорт проекта', 'Поиск архивов', 'Сборка проекта', 'Извлечение файла'].includes(e.payload.operation)) setStatus(`${e.payload.stage} · ${e.payload.completed.toLocaleString()} / ${e.payload.total.toLocaleString()}`);
+            if (["Import project", "Find archives", "Build project", "Extract file"].includes(sourceText(e.payload.operation))) setStatus(`${e.payload.stage} · ${e.payload.completed.toLocaleString()} / ${e.payload.total.toLocaleString()}`);
         });
         return () => {
             void p.then(f => f());
@@ -149,21 +154,27 @@ export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
     }, []);
 
     async function chooseSource() {
-        const path = await open({directory: true, multiple: false, title: 'Папка клиента Perfect World'});
+        const path = await open({directory: true, multiple: false, title: t("Perfect World client folder")});
         if (typeof path !== 'string') return;
         await run(async () => {
             const files = await invoke<Item[]>('project_scan', {source: path});
             setSource(path);
             setArchives(files);
             setSelected([]);
-            setStatus(`Найдено ${files.length} PCK.`);
+            setStatus(t("Found {value0} PCK.", {value0: files.length}));
         });
     }
 
     async function create() {
         if (!(await discard())) return;
         await run(async () => {
-            const p = await invoke<Project>('project_create', {source, parent, name, archives: selected});
+            const p = await invoke<Project>('project_create', {
+                source,
+                parent,
+                name,
+                archives: selected,
+                clientVersion
+            });
             await show(p);
         });
     }
@@ -218,7 +229,7 @@ export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
             await invoke('project_write', {manifest: project.manifest, path: file.path, text, encoding, original});
             setOriginal(await invoke<number[]>('project_read', {manifest: project.manifest, path: file.path}));
             setSaved(text);
-            setStatus('Правка сохранена отдельно: ' + file.path);
+            setStatus("Edit saved separately: " + file.path);
             window.dispatchEvent(new Event('pwforge-saved'));
         });
     }
@@ -226,7 +237,7 @@ export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
     async function build() {
         if (!project) return;
         if (hasUnsavedEdits()) {
-            setError('Сначала сохраните изменения в открытых редакторах, затем запустите сборку.');
+            setError(t("Save changes in the open editors before building."));
             return;
         }
         await run(async () => {
@@ -236,76 +247,86 @@ export function ProjectWorkspace({visible, onOpen, onElements, onBack}: {
                 loose_files: number
             }>('project_build', {manifest: project.manifest});
             setBuildResult(result);
-            setStatus(`Сборка готова: ${result.archives.length} PCK, ${result.loose_files} отдельных файлов. ${result.directory}`);
+            setStatus(t("Build complete: {value0} PCK, {value1} loose files. {value2}", {
+                value0: result.archives.length,
+                value1: result.loose_files,
+                value2: result.directory
+            }));
         });
     }
 
     return <section className="elements-editor project-shell" style={{display: visible ? 'flex' : 'none'}}>
         <header><strong>PW Forge{project && <span> / {project.project.name}</span>}</strong>
-            <button disabled={busy} onClick={() => setWizard(true)}>Новый проект</button>
-            <button disabled={busy} onClick={onOpen}>Открыть</button>
-            <button disabled={busy || !project} onClick={() => void build()}>Собрать изменения</button>
-            <button onClick={onBack}>Архивы →</button>
+            <Button disabled={busy} onClick={() => setWizard(true)}>{t("New project")}</Button>
+            <Button disabled={busy} onClick={onOpen}>{t("Open")}</Button>
+            <Button disabled={busy || !project} onClick={() => void build()}>{t("Build changes")}</Button>
+            <Button onClick={onBack}>{t("Archives →")}</Button>
         </header>
-        {error && <div className="elements-error" role="alert">{error}</div>}
-        {buildResult && <div className="elements-path">Результат сборки: <input readOnly aria-label="Папка сборки"
-                                                                                value={buildResult.directory}
-                                                                                onFocus={e => e.target.select()}/>
-        </div>}
+        {error && <Alert.Root status="error" size="sm"
+                              role="alert"><Alert.Indicator/><Alert.Content>{message(error)}</Alert.Content></Alert.Root>}
+        {buildResult && <Box className="elements-path">{t("Build result: ")}<Field.Root width="auto"><Input readOnly
+                                                                                                            aria-label={t("Build directory")}
+                                                                                                            value={buildResult.directory}
+                                                                                                            onFocus={e => e.target.select()}/></Field.Root>
+        </Box>}
         {wizard ?
-            <div className="project-wizard"><h2>Импорт клиента в новый проект</h2><label>Название<input value={name}
-                                                                                                        disabled={busy}
-                                                                                                        onChange={e => setName(e.target.value)}/></label>
-                <button disabled={busy} onClick={() => void chooseSource()}>Выбрать папку клиента</button>
-                <p>{source || 'Папка не выбрана'}</p>
-                <button disabled={busy} onClick={() => void (async () => {
-                    const path = await open({directory: true, multiple: false, title: 'Где создать папку проекта?'});
+            <Box className="project-wizard"><h2>{t("Import client into a new project")}</h2><Field.Root
+                width="auto"><Field.Label>{t("Name")}</Field.Label><Input value={name}
+                                                                          disabled={busy}
+                                                                          onChange={e => setName(e.target.value)}/></Field.Root>
+                <ClientVersionField value={clientVersion} onChange={setClientVersion} disabled={busy}/>
+                <Button disabled={busy} onClick={() => void chooseSource()}>{t("Choose client folder")}</Button>
+                <p>{source || "No folder selected"}</p>
+                <Button disabled={busy} onClick={() => void (async () => {
+                    const path = await open({
+                        directory: true,
+                        multiple: false,
+                        title: t("Where should the project folder be created?")
+                    });
                     if (typeof path === 'string') setParent(path);
-                })()}>Выбрать расположение проекта
-                </button>
-                <p>{parent ? `${parent} / ${name}` : 'Расположение не выбрано'}</p>
-                <div className="project-archive-actions">
-                    <button disabled={busy} onClick={() => setSelected(archives.map(a => a.path))}>Выбрать все</button>
-                    <button disabled={busy} onClick={() => setSelected([])}>Снять выбор</button>
-                    <span>{selected.length} / {archives.length}</span></div>
-                <div className="project-archive-selection">{archives.map(a => <label key={a.path}><input type="checkbox"
-                                                                                                         disabled={busy}
-                                                                                                         checked={selected.includes(a.path)}
-                                                                                                         onChange={e => setSelected(s => e.target.checked ? [...s, a.path] : s.filter(p => p !== a.path))}/>{a.path}<small>{(a.size / 1024 / 1024).toFixed(0)} MiB</small></label>)}</div>
-                <div>
-                    <button disabled={busy || !source || !parent || !name.trim()} onClick={() => void create()}>Создать
-                        проект и импортировать
-                    </button>
-                    <button disabled={busy} onClick={() => setWizard(false)}>Отмена</button>
-                </div>
-            </div> : project ? <>
-                <div className="elements-path">{project.manifest}</div>
+                })()}>{t("Choose project location")}</Button>
+                <p>{parent ? `${parent} / ${name}` : t("No location selected")}</p>
+                <Box className="project-archive-actions">
+                    <Button disabled={busy}
+                            onClick={() => setSelected(archives.map(a => a.path))}>{t("Select all")}</Button>
+                    <Button disabled={busy} onClick={() => setSelected([])}>{t("Clear selection")}</Button>
+                    <span>{selected.length} / {archives.length}</span></Box>
+                <Box className="project-archive-selection">{archives.map(a => <Switch.Root size="sm" colorPalette="teal"
+                                                                                           key={a.path} disabled={busy}
+                                                                                           checked={selected.includes(a.path)}
+                                                                                           onCheckedChange={({checked}) => setSelected(s => checked ? [...s, a.path] : s.filter(p => p !== a.path))}><Switch.HiddenInput/><Switch.Control><Switch.Thumb/></Switch.Control><Switch.Label>{a.path}<small>{(a.size / 1024 / 1024).toFixed(0)} MiB</small></Switch.Label></Switch.Root>)}</Box>
+                <Box>
+                    <Button disabled={busy || !source || !parent || !name.trim()}
+                            onClick={() => void create()}>{t("Create project and import")}</Button>
+                    <Button disabled={busy} onClick={() => setWizard(false)}>{t("Cancel")}</Button>
+                </Box>
+            </Box> : project ? <>
+                <Box className="elements-path">{project.manifest}</Box>
                 <main>
-                    <aside className="project-tree" aria-label="Файлы проекта">{roots.map(item => <Folder
+                    <aside className="project-tree" aria-label={t("Project files")}>{roots.map(item => <Folder
                         key={project.manifest + item.path} manifest={project.manifest} item={item} onFile={item => {
                         if (!busy) void read(item);
                     }} onError={setError}/>)}</aside>
                     <article>{file ? <>
-                        <div className="elements-field-toolbar">
+                        <Box className="elements-field-toolbar">
                             <strong>{file.path}{dirty ? ' *' : ''}</strong><span>{encoding} · {file.size.toLocaleString()} bytes</span>
-                            <button disabled={busy || !dirty || !editable} onClick={() => void saveFile()}>Сохранить
-                            </button>
-                        </div>
-                        <div className="project-editor">{editable ?
+                            <Button disabled={busy || !dirty || !editable}
+                                    onClick={() => void saveFile()}>{t("Save")}</Button>
+                        </Box>
+                        <Box className="project-editor">{editable ?
                             <TextEditor value={text} fileName={file.name} readOnly={busy} onChange={setText}/> : <>
-                                <p>HEX · первые 4096 байт</p>
+                                <p>{t("HEX · first 4096 bytes")}</p>
                                 <pre>{hex}</pre>
-                            </>}</div>
-                    </> : <div className="elements-empty">{project.project.errors.length > 0 &&
-                        <pre className="elements-error">{project.project.errors.join('\n')}</pre>}</div>}</article>
+                            </>}</Box>
+                    </> : <Box className="elements-empty">{project.project.errors.length > 0 &&
+                        <pre className="elements-error">{project.project.errors.join('\n')}</pre>}</Box>}</article>
                 </main>
-            </> : <div className="elements-empty"></div>}
-        <footer className="elements-status"><span>{busy ? 'Выполняется: ' : ''}{status}</span>
-            <button disabled={busy} onClick={() => void run(async () => {
+            </> : <Box className="elements-empty"></Box>}
+        <footer className="elements-status"><span>{busy ? t("Working: ") : ''}{message(status)}</span>
+            <Button disabled={busy} onClick={() => void run(async () => {
                 await invoke('project_register_association');
-                setStatus('Ассоциация .pwforge зарегистрирована для текущего exe.');
-            })}>Ассоциация .pwforge
-            </button>
+                setStatus(t("The .pwforge association is registered for this executable."));
+            })}>{t(".pwforge association")}</Button>
         </footer>
     </section>;
 }

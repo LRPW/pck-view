@@ -1,9 +1,17 @@
-import {useEffect, useMemo, useRef, useState} from 'react';
+import {matchesShortcut} from '../../app/shortcuts';
+import {message, t} from "../../i18n";
+import {Alert, Box, Button, Field, Input, Select, Textarea} from "@chakra-ui/react";
 import {invoke} from '@tauri-apps/api/core';
+import {save as chooseExportPath} from '@tauri-apps/plugin-dialog';
+import type {ComponentProps} from "react";
+import {useEffect, useMemo, useRef, useState} from 'react';
+import {AccordionItem, AccordionItemContent, AccordionItemTrigger, AccordionRoot} from "../../components/ui/accordion";
+import {SelectContent, SelectItem, SelectRoot, SelectTrigger, SelectValueText} from "../../components/ui/select";
 import {ColumnDivider, resizeWidth} from './ColumnDivider';
-import {useColumnWidth} from './useColumnWidth';
-import {type DomainData, type Point, readDomain, type Territory, writeDomain} from './domain-data';
+import {type DomainData, type Point, readDomain, type Territory, writeDomain, writeDomainServer} from './domain-data';
 import './domain.css';
+import {selectCollection} from './select-collection';
+import {useColumnWidth} from './useColumnWidth';
 
 function makeDraft(item: Territory) {
     return {
@@ -25,7 +33,7 @@ type Draft = ReturnType<typeof makeDraft>;
 function integer(value: string, label: string) {
     const number = Number(value);
     if (!/^-?\d+$/.test(value.trim()) || number < -0x80000000 || number > 0x7fffffff) {
-        throw new Error(`${label} · требуется целое число в диапазоне i32`);
+        throw new Error(`${label} · an i32 integer is required`);
     }
     return number;
 }
@@ -37,37 +45,37 @@ function numbers(value: string, label: string) {
 function editTerritory(draft: Draft, items: Territory[], selected: number) {
     const old = items[selected];
     const id = integer(draft.id, 'ID');
-    if (id !== old.id && items.some(item => item.id === id)) throw new Error(`ID ${id} уже используется`);
+    if (id !== old.id && items.some(item => item.id === id)) throw new Error(`ID ${id} is already in use`);
     if (draft.name !== old.name && (draft.name.length > 15 || draft.name.includes('\0'))) {
-        throw new Error('Название должно помещаться в 15 символов UTF-16');
+        throw new Error("The name must fit in 15 UTF-16 code units");
     }
-    const coordinates = numbers(draft.vertices, 'Вершины');
-    if (coordinates.length % 2) throw new Error('Вершины должны содержать пары X Y');
+    const coordinates = numbers(draft.vertices, "Vertices");
+    if (coordinates.length % 2) throw new Error("Vertices must contain X Y pairs");
     const vertices: Point[] = [];
     for (let i = 0; i < coordinates.length; i += 2) vertices.push([coordinates[i], coordinates[i + 1]]);
-    const faces = numbers(draft.faces, 'Треугольники');
+    const faces = numbers(draft.faces, "Triangles");
     if (faces.length % 3 || faces.some(index => index < 0 || index >= vertices.length)) {
-        throw new Error('Каждый треугольник должен содержать три индекса существующих вершин');
+        throw new Error("Each triangle must contain three valid vertex indices");
     }
-    const neighbours = numbers(draft.neighbours, 'Соседи').map(value => value === old.id ? id : value);
+    const neighbours = numbers(draft.neighbours, "Neighbours").map(value => value === old.id ? id : value);
     if (draft.neighbours !== old.neighbours.join(', ') &&
         (new Set(neighbours).size !== neighbours.length ||
             neighbours.some(value => value === id || !items.some(item => item.id === value)))) {
-        throw new Error('Укажите разные ID существующих соседних территорий');
+        throw new Error("Specify distinct IDs of existing neighbouring territories");
     }
     const updated: Territory = {
-        id, name: draft.name, type: integer(draft.type, 'Уровень'), reward: integer(draft.reward, 'Награда'),
-        center: [integer(draft.x, 'Центр X'), integer(draft.y, 'Центр Y')], vertices, faces, neighbours,
+        id, name: draft.name, type: integer(draft.type, "Tier"), reward: integer(draft.reward, "Reward"),
+        center: [integer(draft.x, "Center X"), integer(draft.y, "Center Y")], vertices, faces, neighbours,
     };
     if (old.nations) {
         const positions = draft.positions === makeDraft(old).positions ? old.nations.positions :
             draft.positions.trim().split(/[\s,;]+/).map(value => Math.fround(Number(value)));
         if (positions.length !== 12 || positions.some(value => !Number.isFinite(value))) {
-            throw new Error('Укажите четыре тройки координат X Y Z');
+            throw new Error("Specify four sets of X Y Z coordinates");
         }
         updated.nations = {
-            country: integer(draft.country, 'Страна'),
-            capital: integer(draft.capital, 'Столица'),
+            country: integer(draft.country, "Country"),
+            capital: integer(draft.capital, "Capital"),
             positions,
         };
     }
@@ -100,14 +108,16 @@ function mapShape(item: Territory) {
     return {fill, outline};
 }
 
-export function DomainEditor({id, index, nations, active, onDirty, onSaved}: {
+export function DomainEditor({id, index, filename, active, onDirty, onSaved}: {
     id: number;
     index: number;
-    nations: boolean;
+    filename: string;
     active: boolean;
     onDirty: (dirty: boolean) => void;
     onSaved: () => void;
 }) {
+    const nations = /^domain2/i.test(filename);
+    const serverName = filename.replace(/\.data$/i, '.sev').toLowerCase();
     const [listWidth, setListWidth] = useColumnWidth('domain.list', 240);
     const [panelHeight, setPanelHeight] = useColumnWidth('domain.properties', 240);
     const properties = useRef<HTMLDivElement>(null);
@@ -179,6 +189,14 @@ export function DomainEditor({id, index, nations, active, onDirty, onSaved}: {
         }
     }
 
+    function editedSpeed() {
+        const nextSpeed = speedChanged ? Math.fround(Number(speed)) : document?.speed;
+        if (speedChanged && (!Number.isFinite(nextSpeed) || nextSpeed! < Math.fround(0.001))) {
+            throw new Error(t("Movement speed must be at least 0.001"));
+        }
+        return nextSpeed;
+    }
+
     async function save() {
         if (!document || !original || busy || !dirty) return;
         setBusy(true);
@@ -186,10 +204,7 @@ export function DomainEditor({id, index, nations, active, onDirty, onSaved}: {
         setStatus('');
         try {
             const updated = commit();
-            const nextSpeed = speedChanged ? Math.fround(Number(speed)) : document.speed;
-            if (speedChanged && (!Number.isFinite(nextSpeed) || nextSpeed! < Math.fround(0.001))) {
-                throw new Error('Скорость перемещения должна быть не меньше 0,001');
-            }
+            const nextSpeed = editedSpeed();
             const bytes = writeDomain(document, updated, nextSpeed);
             const parsed = readDomain(bytes, nations);
             await invoke('ide_save_domain', {id, index, original: Array.from(original), bytes: Array.from(bytes)});
@@ -198,8 +213,30 @@ export function DomainEditor({id, index, nations, active, onDirty, onSaved}: {
             setItems(parsed.territories);
             setDraft(parsed.territories[selected] ? makeDraft(parsed.territories[selected]) : undefined);
             setSpeed(parsed.speed === undefined ? '' : String(parsed.speed));
-            setStatus('Сохранено');
+            setStatus(t("Saved"));
             onSaved();
+        } catch (reason) {
+            setError(String(reason));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function exportServer() {
+        if (!document || busy) return;
+        setBusy(true);
+        setError('');
+        setStatus('');
+        try {
+            const bytes = writeDomainServer(document, commit(), editedSpeed());
+            const path = await chooseExportPath({
+                title: t("Export server territories"),
+                defaultPath: serverName,
+                filters: [{name: t("Server territories"), extensions: ['sev']}],
+            });
+            if (!path) return;
+            await invoke('ide_export_server_data', {path, bytes: Array.from(bytes)});
+            setStatus(serverName + " exported");
         } catch (reason) {
             setError(String(reason));
         } finally {
@@ -210,7 +247,7 @@ export function DomainEditor({id, index, nations, active, onDirty, onSaved}: {
     useEffect(() => {
         if (!active) return;
         const key = (event: KeyboardEvent) => {
-            if ((event.ctrlKey || event.metaKey) && event.code === 'KeyS') {
+            if (matchesShortcut(event, 'save')) {
                 event.preventDefault();
                 void save();
             }
@@ -239,35 +276,44 @@ export function DomainEditor({id, index, nations, active, onDirty, onSaved}: {
     const state = (territory: Territory, position: number) =>
         position === selected ? 'selected' : neighbours.has(territory.id) ? 'neighbour' : '';
     const update = (field: keyof Draft, value: string) => setDraft(old => old && {...old, [field]: value});
+    const handleColumnDividerDelta: ComponentProps<typeof ColumnDivider>["onDelta"] = delta => {
+        const panel = properties.current;
+        if (!panel?.parentElement) return;
+        const max = panel.parentElement.clientHeight - 107;
+        if (max > 0) setPanelHeight(height => resizeWidth(Math.min(height, max), -delta, Math.min(80, max), max));
+    };
     return <section className="domain-editor">
         <header>
-            <button disabled={busy || !dirty} onClick={() => void save()}>Сохранить{dirty ? ' *' : ''}</button>
-            <button disabled={busy || !changed} onClick={apply}>Применить к карте</button>
-            <button disabled={busy || !changed} onClick={() => {
+            <Button disabled={busy || !dirty} onClick={() => void save()}>{t("Save")}{dirty ? ' *' : ''}</Button>
+            <Button size="xs" variant="outline" disabled={busy || !document}
+                    onClick={() => void exportServer()}>{t("Export ")}{serverName}</Button>
+            <Button disabled={busy || !changed} onClick={apply}>{t("Apply to map")}</Button>
+            <Button disabled={busy || !changed} onClick={() => {
                 setDraft(makeDraft(item));
                 setError('');
-            }}>Отменить правки территории
-            </button>
-            <span role="status">{busy ? 'Выполняется операция…' : status}</span>
+            }}>{t("Revert territory changes")}</Button>
+            <span role="status">{busy ? t("Working…") : status}</span>
         </header>
-        {error && <div className="ide-error" role="alert">{error}</div>}
-        <div className="domain-workspace">
+        {error && <Alert.Root status="error" size="sm"
+                              role="alert"><Alert.Indicator/><Alert.Content>{message(error)}</Alert.Content></Alert.Root>}
+        <Box className="domain-workspace">
             <aside style={{width: listWidth}}>
-                <input aria-label="Поиск территории" placeholder="ID или название…" value={query}
-                       onChange={event => setQuery(event.target.value)}/>
-                <nav aria-label="Территории">
+                <Field.Root width="auto"><Input aria-label={t("Find territory")} placeholder={t("ID or name…")}
+                                                value={query}
+                                                onChange={event => setQuery(event.target.value)}/></Field.Root>
+                <nav aria-label={t("Territories")}>
                     {items.map((territory, position) =>
                         (territory.name.toLowerCase().includes(query.toLowerCase()) || String(territory.id).includes(query)) &&
-                        <button key={position} className={state(territory, position)} disabled={busy}
+                        <Button key={position} className={state(territory, position)} disabled={busy}
                                 onClick={() => select(position)} aria-pressed={position === selected}>
-                            <code>{territory.id}</code>{territory.name || 'Без названия'}
-                        </button>)}
+                            <code>{territory.id}</code>{territory.name || "Untitled"}
+                        </Button>)}
                 </nav>
             </aside>
-            <ColumnDivider label="Ширина списка территорий"
+            <ColumnDivider label={t("Territory list width")}
                            onDelta={delta => setListWidth(width => resizeWidth(width, delta, 120, 460))}/>
-            <div className="domain-details">
-                {map && <svg className="domain-map" viewBox={map.viewBox} aria-label="Карта территорий">
+            <Box className="domain-details">
+                {map && <svg className="domain-map" viewBox={map.viewBox} aria-label={t("Territory map")}>
                     {items.map((territory, position) => <g key={position}
                                                            className={`domain-region ${state(territory, position)}`}
                                                            onClick={() => select(position)}>
@@ -277,60 +323,103 @@ export function DomainEditor({id, index, nations, active, onDirty, onSaved}: {
                     </g>)}
                     {item && <circle cx={item.center[0]} cy={item.center[1]} r="3" className="domain-center"/>}
                 </svg>}
-                {draft && <ColumnDivider label="Высота панели параметров" orientation="horizontal" onDelta={delta => {
-                    const panel = properties.current;
-                    if (!panel?.parentElement) return;
-                    const max = panel.parentElement.clientHeight - 107;
-                    if (max > 0) setPanelHeight(height => resizeWidth(Math.min(height, max), -delta, Math.min(80, max), max));
-                }}/>}
-                {draft && <div className="domain-properties" ref={properties} style={{height: panelHeight}}>
-                    {([['name', 'Название'], ['id', 'ID'], ['reward', nations ? 'Очки' : 'Награда за неделю'],
-                        ['x', 'Центр X'], ['y', 'Центр Y']] as const).map(([field, label]) =>
-                        <label key={field}>{label}<input value={draft[field]} disabled={busy}
-                                                         inputMode={field === 'name' ? 'text' : 'numeric'}
-                                                         onChange={event => update(field, event.target.value)}/></label>)}
+                {draft && <ColumnDivider label={t("Properties panel height")} orientation="horizontal"
+                                         onDelta={handleColumnDividerDelta}/>}
+                {draft && <Box className="domain-properties" ref={properties} style={{height: panelHeight}}>
+                    {([['name', t("Name")], ['id', 'ID'], ['reward', nations ? t("Points") : t("Weekly reward")],
+                        ['x', t("Center X")], ['y', t("Center Y")]] as const).map(([field, label]) =>
+                        <Field.Root width="auto" key={field}><Field.Label>{t(label)}</Field.Label><Input
+                            value={draft[field]} disabled={busy}
+                            inputMode={field === 'name' ? 'text' : 'numeric'}
+                            onChange={event => update(field, event.target.value)}/></Field.Root>)}
                     {nations ? <>
-                        <label>Тип боя<input inputMode="numeric" value={draft.type} disabled={busy}
-                                             onChange={event => update('type', event.target.value)}/></label>
-                        <label>Начальная страна<select value={draft.country} disabled={busy}
-                                                       onChange={event => update('country', event.target.value)}>
-                            {!['0', '1', '2', '3', '4'].includes(draft.country) &&
-                                <option value={draft.country}>{draft.country}</option>}
-                            <option value="0">Без страны</option>
-                            {[1, 2, 3, 4].map(country => <option key={country}
-                                                                 value={country}>Страна {country}</option>)}
-                        </select></label>
-                        <label>Столица<select value={draft.capital} disabled={busy}
-                                              onChange={event => update('capital', event.target.value)}>
-                            {!['0', '1'].includes(draft.capital) &&
-                                <option value={draft.capital}>{draft.capital}</option>}
-                            <option value="0">Нет</option>
-                            <option value="1">Да</option>
-                        </select></label>
-                        <label>Скорость перемещения по карте<input inputMode="decimal" value={speed} disabled={busy}
-                                                                   onChange={event => setSpeed(event.target.value)}/></label>
-                    </> : <label>Уровень<select value={draft.type} disabled={busy}
-                                                onChange={event => update('type', event.target.value)}>
-                        {!['0', '1', '2', '3'].includes(draft.type) && <option value={draft.type}>{draft.type}</option>}
-                        <option value="0">Без уровня</option>
-                        <option value="1">III</option>
-                        <option value="2">II</option>
-                        <option value="3">I</option>
-                    </select></label>}
-                    <label className="domain-wide">ID соседей<input value={draft.neighbours} disabled={busy}
-                                                                    onChange={event => update('neighbours', event.target.value)}/></label>
-                    <details className="domain-wide">
-                        <summary>Геометрия</summary>
-                        <label>Вершины (X Y)<textarea rows={5} value={draft.vertices} disabled={busy}
-                                                      onChange={event => update('vertices', event.target.value)}/></label>
-                        <label>Треугольники (индексы с 0)<textarea rows={5} value={draft.faces} disabled={busy}
-                                                                   onChange={event => update('faces', event.target.value)}/></label>
-                        {nations && <label>Координаты в инстансе (X Y Z)<textarea rows={4} value={draft.positions}
-                                                                                  disabled={busy}
-                                                                                  onChange={event => update('positions', event.target.value)}/></label>}
-                    </details>
-                </div>}
-            </div>
-        </div>
+                        <Field.Root width="auto"><Field.Label>{t("Battle type")}</Field.Label><Input inputMode="numeric"
+                                                                                                     value={draft.type}
+                                                                                                     disabled={busy}
+                                                                                                     onChange={event => update('type', event.target.value)}/></Field.Root>
+                        <Field.Root width="auto"><Field.Label>{t("Initial country")}</Field.Label><SelectRoot size="sm"
+                                                                                                              lazyMount
+                                                                                                              unmountOnExit
+                                                                                                              minW="140px"
+                                                                                                              collection={selectCollection(<>{!['0', '1', '2', '3', '4'].includes(draft.country) &&
+                                                                                                                  <option
+                                                                                                                      value={draft.country}>{draft.country}</option>}
+                                                                                                                  <option
+                                                                                                                      value="0">{t("No country")}</option>
+                                                                                                                  {[1, 2, 3, 4].map(country =>
+                                                                                                                      <option
+                                                                                                                          key={country}
+                                                                                                                          value={country}>{t("Country ")}{country}</option>)}</>)}
+                                                                                                              value={[String(draft.country)]}
+                                                                                                              onValueChange={async ({value: [value]}) => update('country', value)}
+                                                                                                              disabled={busy}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                            <SelectItem key={select.collection.getItemValue(item)}
+                                        item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot></Field.Root>
+                        <Field.Root width="auto"><Field.Label>{t("Capital")}</Field.Label><SelectRoot size="sm"
+                                                                                                      lazyMount
+                                                                                                      unmountOnExit
+                                                                                                      minW="140px"
+                                                                                                      collection={selectCollection(<>{!['0', '1'].includes(draft.capital) &&
+                                                                                                          <option
+                                                                                                              value={draft.capital}>{draft.capital}</option>}
+                                                                                                          <option
+                                                                                                              value="0">{t("No")}</option>
+                                                                                                          <option
+                                                                                                              value="1">{t("Yes")}</option>
+                                                                                                      </>)}
+                                                                                                      value={[String(draft.capital)]}
+                                                                                                      onValueChange={async ({value: [value]}) => update('capital', value)}
+                                                                                                      disabled={busy}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                            <SelectItem key={select.collection.getItemValue(item)}
+                                        item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot></Field.Root>
+                        <Field.Root width="auto"><Field.Label>{t("Map movement speed")}</Field.Label><Input
+                            inputMode="decimal" value={speed} disabled={busy}
+                            onChange={event => setSpeed(event.target.value)}/></Field.Root>
+                    </> : <Field.Root width="auto"><Field.Label>{t("Tier")}</Field.Label><SelectRoot size="sm" lazyMount
+                                                                                                     unmountOnExit
+                                                                                                     minW="140px"
+                                                                                                     collection={selectCollection(<>{!['0', '1', '2', '3'].includes(draft.type) &&
+                                                                                                         <option
+                                                                                                             value={draft.type}>{draft.type}</option>}
+                                                                                                         <option
+                                                                                                             value="0">{t("No tier")}</option>
+                                                                                                         <option
+                                                                                                             value="1">III
+                                                                                                         </option>
+                                                                                                         <option
+                                                                                                             value="2">II
+                                                                                                         </option>
+                                                                                                         <option
+                                                                                                             value="3">I
+                                                                                                         </option>
+                                                                                                     </>)}
+                                                                                                     value={[String(draft.type)]}
+                                                                                                     onValueChange={async ({value: [value]}) => update('type', value)}
+                                                                                                     disabled={busy}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                        <SelectItem key={select.collection.getItemValue(item)}
+                                    item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot></Field.Root>}
+                    <Field.Root width="auto"
+                                className="domain-wide"><Field.Label>{t("Neighbour IDs")}</Field.Label><Input
+                        value={draft.neighbours} disabled={busy}
+                        onChange={event => update('neighbours', event.target.value)}/></Field.Root>
+                    <AccordionRoot collapsible defaultValue={false ? ["content"] : []}
+                                   className="domain-wide"><AccordionItem
+                        value="content"><AccordionItemTrigger>{t("Geometry")}</AccordionItemTrigger><AccordionItemContent><Field.Root
+                        width="auto"><Field.Label>{t("Vertices (X Y)")}</Field.Label><Textarea rows={5}
+                                                                                               value={draft.vertices}
+                                                                                               disabled={busy}
+                                                                                               onChange={event => update('vertices', event.target.value)}/></Field.Root><Field.Root
+                        width="auto"><Field.Label>{t("Triangles (zero-based indices)")}</Field.Label><Textarea rows={5}
+                                                                                                               value={draft.faces}
+                                                                                                               disabled={busy}
+                                                                                                               onChange={event => update('faces', event.target.value)}/></Field.Root>{nations &&
+                        <Field.Root width="auto"><Field.Label>{t("Instance coordinates (X Y Z)")}</Field.Label><Textarea
+                            rows={4} value={draft.positions}
+                            disabled={busy}
+                            onChange={event => update('positions', event.target.value)}/></Field.Root>}
+                    </AccordionItemContent></AccordionItem></AccordionRoot>
+                </Box>}
+            </Box>
+        </Box>
     </section>;
 }

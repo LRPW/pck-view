@@ -8,10 +8,16 @@ const root = new URL('../src/', import.meta.url), source = fs.readFileSync(new U
 const store = new Map(), events = {}, exports = {};
 const context = {
     exports,
-    require: () => ({
-        useSyncExternalStore: () => {
+    require: specifier => {
+        if (specifier.endsWith('.json')) {
+            return {default: JSON.parse(fs.readFileSync(new URL(specifier, new URL('i18n/', root)), 'utf8'))};
         }
-    }),
+        assert.equal(specifier, 'react');
+        return {
+            useSyncExternalStore: () => {
+            }
+        };
+    },
     document: {documentElement: {}},
     localStorage: {getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v)},
     window: {addEventListener: (name, fn) => events[name] = fn}
@@ -23,13 +29,15 @@ vm.runInNewContext(ts.transpileModule(source, {
     }
 }).outputText, context);
 test('language persistence and runtime translation', () => {
-    assert.equal(exports.getLanguage(), 'ru');
+    assert.equal(exports.getLanguage(), 'en');
+    exports.setLanguage('ru');
     assert.equal(exports.t('Открыть PCK'), 'Открыть PCK');
     exports.setLanguage('en');
     assert.equal(store.get('lrpw.language'), 'en');
     assert.equal(exports.t('Открыть PCK'), 'Open PCK');
     assert.equal(exports.t('Запаковать в PCK'), 'Pack into PCK');
-    assert.equal(exports.message('configs\\file.7z: Размер распакованного файла не совпал: ожидалось 16, получено 8 (в PCK: 8)'), 'configs\\file.7z: Uncompressed file size mismatch: expected 16, received 8 (in PCK: 8)');
+    assert.equal(exports.message('Размер распакованного файла не совпал'), 'Uncompressed file size mismatch');
+    assert.equal(exports.message('Сборка готова: 1 PCK, 2 отдельных файлов. output'), 'Build complete: 1 PCK, 2 loose files. output');
     exports.setLanguage('ru');
     assert.equal(exports.t('Файл не выбран'), 'Файл не выбран');
 });

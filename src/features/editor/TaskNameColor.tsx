@@ -1,3 +1,4 @@
+import {t} from "../../i18n";
 import {Button, ColorPicker, parseColor, Portal} from '@chakra-ui/react';
 import type {ReactNode} from 'react';
 
@@ -8,14 +9,14 @@ export function TaskNameColor({text, change, disabled}: {
 }) {
     const match = leadingColor.exec(text);
     const body = match ? text.slice(match[0].length) : text;
-    return <TaskColorPicker label="Цвет названия задания" color={match?.[1]} disabled={disabled}
+    return <TaskColorPicker label={t("Quest name color")} color={match?.[1]} disabled={disabled}
                             change={hex => {
                                 const next = `^${hex}${body}`;
                                 if (next.length <= 29 && match?.[1].toLowerCase() !== hex.toLowerCase()) change(next);
                             }}>
-        {body.length > 22 && <small>Для кода цвета нужно 7 знаков из 29.</small>}
-        <Button type="button" size="xs" variant="outline" disabled={!match} onClick={() => change(body)}>Убрать
-            цвет</Button>
+        {body.length > 22 && <small>{t("A color code requires 7 of the 29 characters.")}</small>}
+        <Button type="button" size="xs" variant="outline" disabled={!match}
+                onClick={() => change(body)}>{t("Remove color")}</Button>
     </TaskColorPicker>;
 }
 
@@ -32,7 +33,7 @@ export function TaskColorPicker({label, color, change, disabled, children}: {
             </ColorPicker.Trigger>
         </ColorPicker.Control>
         <Portal>
-            <ColorPicker.Positioner className="dark">
+            <ColorPicker.Positioner>
                 <ColorPicker.Content>
                     <ColorPicker.Area>
                         <ColorPicker.AreaBackground/>
@@ -42,7 +43,7 @@ export function TaskColorPicker({label, color, change, disabled, children}: {
                         <ColorPicker.ChannelSliderTrack/>
                         <ColorPicker.ChannelSliderThumb/>
                     </ColorPicker.ChannelSlider>
-                    <ColorPicker.ChannelInput channel="hex" aria-label="Цвет HEX"/>
+                    <ColorPicker.ChannelInput channel="hex" aria-label={t("HEX color")}/>
                     {children}
                 </ColorPicker.Content>
             </ColorPicker.Positioner>

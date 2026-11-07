@@ -69,7 +69,7 @@ fn persist(target: &Path, language: &str, entries: HashMap<(String, String), Ent
         language: language.into(),
         entries,
     };
-    let mut file = tempfile::NamedTempFile::new_in(target.parent().ok_or("Нет папки локалей")?)
+    let mut file = tempfile::NamedTempFile::new_in(target.parent().ok_or("Locale folder is missing")?)
         .map_err(err)?;
     {
         let mut out = BufWriter::new(file.as_file_mut());
@@ -294,10 +294,10 @@ fn run(
                 if job.stop.load(Ordering::Relaxed) {
                     break;
                 }
-                let invalid = reason.contains("пустой или недопустимый фрагмент")
-                    || reason.contains("число фрагментов")
-                    || reason.contains("массив строк")
-                    || reason.contains("слишком велика");
+                let invalid = reason.contains("empty or invalid fragment")
+                    || reason.contains("fragment count")
+                    || reason.contains("string array")
+                    || reason.contains("too large");
                 if !invalid {
                     error = Some(reason);
                     break;
@@ -350,7 +350,7 @@ pub async fn ide_locale_batch_start(
     {
         let mut running = jobs().lock().map_err(err)?;
         if running.contains_key(&key) {
-            return Err("Пакетный перевод уже выполняется".into());
+            return Err("Batch translation is already running".into());
         }
         running.insert(key.clone(), job.clone());
     }

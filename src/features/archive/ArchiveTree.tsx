@@ -1,6 +1,7 @@
-import {t, useLanguage} from '../../i18n/index';
-import {memo, useDeferredValue, useEffect, useMemo, useRef, useState} from 'react';
 import {Box, createTreeCollection, Text, TreeView} from '@chakra-ui/react';
+import type {ComponentProps} from "react";
+import {memo, useDeferredValue, useEffect, useMemo, useRef, useState} from 'react';
+import {t, useLanguage} from '../../i18n/index';
 
 type Entry = { name: string; size: number; changed: boolean };
 type Node = { id: string; name: string; path: string; index?: number; children?: Node[]; childCount?: number };
@@ -24,7 +25,7 @@ export const ArchiveTree = memo(function ArchiveTree({entries, query, selected, 
         count: number;
         branches: string[];
         query: string
-    }>({root: {id: 'root', name: t('Ресурсы'), path: '', children: []}, count: 0, branches: [], query: ''});
+    }>({root: {id: 'root', name: t("Resources"), path: '', children: []}, count: 0, branches: [], query: ''});
     const [indexing, setIndexing] = useState(false);
     useEffect(() => {
         const instance = new Worker(new URL('./archive-tree.worker.ts', import.meta.url), {type: 'module'});
@@ -137,32 +138,34 @@ export const ArchiveTree = memo(function ArchiveTree({entries, query, selected, 
     }, [filtered.query]);
     const start = Math.max(0, Math.min(Math.floor(scrollTop / ROW_HEIGHT), Math.max(0, rows.length - 1)) - 6);
     const end = Math.min(rows.length, start + Math.ceil(height / ROW_HEIGHT) + 12);
+    const handleTreeViewRootSelectionChange: ComponentProps<typeof TreeView.Root>["onSelectionChange"] = details => {
+        if (busy) return;
+        const id = details.selectedValue[0];
+        const node = id ? collection.findNode(id) : undefined;
+        if (node?.index === undefined) return;
+        const path = entries[node.index]?.name.replaceAll('\\', '/').split('/').filter(Boolean).join('/');
+        if (path === node.path) choose(node.index);
+    };
+    const handleTreeViewRootscrollToIndexFn: ComponentProps<typeof TreeView.Root>["scrollToIndexFn"] = ({node}) => {
+        const index = rowIndices.get(node.id) ?? -1;
+        const el = viewport.current;
+        if (index < 0 || !el) return;
+        const top = index * ROW_HEIGHT;
+        if (top < el.scrollTop) el.scrollTop = top;
+        else if (top + ROW_HEIGHT > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_HEIGHT - el.clientHeight;
+    };
     return <>
         <Text fontSize="xs"
-              color="#8393aa"
-              aria-busy={indexing}>{filtered.count.toLocaleString() + " / " + entries.length.toLocaleString() + t(" файлов")}</Text>
+              color="var(--chakra-colors-fg-muted)"
+              aria-busy={indexing}>{filtered.count.toLocaleString() + " / " + entries.length.toLocaleString() + t(" files")}</Text>
         <TreeView.Root className="archive-tree" collection={collection} colorPalette="teal" size="sm"
                        expandedValue={expandedValue} onExpandedChange={details => {
             if (!filtered.query) setExpanded(details.expandedValue);
         }}
                        selectedValue={selected === undefined ? [] : ['file:' + selected]}
-                       onSelectionChange={details => {
-                           if (busy) return;
-                           const id = details.selectedValue[0];
-                           const node = id ? collection.findNode(id) : undefined;
-                           if (node?.index === undefined) return;
-                           const path = entries[node.index]?.name.replaceAll('\\', '/').split('/').filter(Boolean).join('/');
-                           if (path === node.path) choose(node.index);
-                       }}
-                       scrollToIndexFn={({node}) => {
-                           const index = rowIndices.get(node.id) ?? -1;
-                           const el = viewport.current;
-                           if (index < 0 || !el) return;
-                           const top = index * ROW_HEIGHT;
-                           if (top < el.scrollTop) el.scrollTop = top;
-                           else if (top + ROW_HEIGHT > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_HEIGHT - el.clientHeight;
-                       }}>
-            <TreeView.Label srOnly>{t("Файлы архива")}</TreeView.Label>
+                       onSelectionChange={handleTreeViewRootSelectionChange}
+                       scrollToIndexFn={handleTreeViewRootscrollToIndexFn}>
+            <TreeView.Label srOnly>{t("Archive files")}</TreeView.Label>
             <TreeView.Tree ref={viewport} className="tree-viewport" aria-busy={indexing || deferredQuery !== query}
                            onScroll={event => setScrollTop(Math.floor(event.currentTarget.scrollTop / ROW_HEIGHT) * ROW_HEIGHT)}>
                 <Box position="relative" height={`${rows.length * ROW_HEIGHT}px`} flexShrink={0}>
@@ -183,7 +186,7 @@ export const ArchiveTree = memo(function ArchiveTree({entries, query, selected, 
                                                                     title={node.path}>
                                     <TreeView.ItemText
                                         truncate>{entries[node.index!]?.changed ? '● ' : ''}{node.name}</TreeView.ItemText>
-                                    <Text as="span" fontSize="xs" color="#8393aa" ml="auto"
+                                    <Text as="span" fontSize="xs" color="var(--chakra-colors-fg-muted)" ml="auto"
                                           flexShrink="0">{entries[node.index!]?.size.toLocaleString()} B</Text>
                                 </TreeView.Item>}
                             </Box>

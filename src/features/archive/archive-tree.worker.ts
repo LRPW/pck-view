@@ -2,7 +2,7 @@ type Node = { id: string; name: string; path: string; index?: number; children?:
 type Request = { entries?: string[]; query: string; expanded: string[]; id: number };
 
 const collator = new Intl.Collator();
-const makeRoot = (): Node => ({id: 'root', name: 'Ресурсы', path: '', children: []});
+const makeRoot = (): Node => ({id: 'root', name: "Resources", path: '', children: []});
 let source = makeRoot();
 let folders = new Map<string, Node>();
 let entries: string[] = [];

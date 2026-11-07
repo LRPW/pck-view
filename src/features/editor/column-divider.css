@@ -12,7 +12,7 @@
     content: "";
     position: absolute;
     inset: 0 3px;
-    background: #253044;
+    background: var(--chakra-colors-border);
 }
 
 .column-divider[aria-orientation="horizontal"] {
@@ -28,5 +28,5 @@
 .column-divider:hover::after,
 .column-divider:focus-visible::after,
 .column-divider:active::after {
-    background: #63e2c5;
+    background: var(--chakra-colors-teal-fg);
 }

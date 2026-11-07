@@ -20,10 +20,10 @@ pub(super) fn paths(scope: &ide::Scope, language: &str) -> Result<PathBuf> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
     {
-        return Err("Укажите код локали, например ru или pt-BR".into());
+        return Err("Specify a locale code, such as ru or pt-BR".into());
     }
     let source = PathBuf::from(scope.path()?);
-    let root = source.parent().ok_or("Нет папки источника")?;
+    let root = source.parent().ok_or("Source folder is missing")?;
     let directory = root.join("locales");
     fs::create_dir_all(&directory).map_err(err)?;
     reject_link(&directory)?;
@@ -32,7 +32,7 @@ pub(super) fn paths(scope: &ide::Scope, language: &str) -> Result<PathBuf> {
     } else {
         let name = source
             .file_name()
-            .ok_or("Нет имени источника")?
+            .ok_or("Source name is missing")?
             .to_string_lossy();
         format!("{name}.{language}.json")
     };
@@ -119,7 +119,7 @@ fn locale(path: &Path, language: &str) -> Result<Locale> {
 
 fn translated_path(scope: &ide::Scope, language: &str) -> Result<PathBuf> {
     if language.eq_ignore_ascii_case("source") {
-        return Err("Укажите код языка перевода".into());
+        return Err("Specify the target language code".into());
     }
     paths(scope, language)
 }
@@ -307,69 +307,75 @@ pub async fn ide_locale_save(
     state: tauri::State<'_, ide::Ide>,
 ) -> Result<String> {
     let scope = state.scope(id)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let _write = LOCALE_WRITES.lock().map_err(err)?;
-        let target = translated_path(&scope, &language)?;
-        let source = source(&paths(&scope, "source")?)?;
-        let index: HashMap<_, _> = source
-            .entries
+    tauri::async_runtime::spawn_blocking(move || save_impl(&scope, language, changes))
+        .await
+        .map_err(err)?
+}
+
+pub(super) fn save_impl(
+    scope: &ide::Scope,
+    language: String,
+    changes: Vec<Translation>,
+) -> Result<String> {
+    let _write = LOCALE_WRITES.lock().map_err(err)?;
+    let target = translated_path(&scope, &language)?;
+    let source = source(&paths(&scope, "source")?)?;
+    let index: HashMap<_, _> = source
+        .entries
+        .iter()
+        .map(|entry| ((entry.file.as_str(), entry.path.as_str()), entry))
+        .collect();
+    let mut locale = locale(&target, &language)?;
+    let mut entries: HashMap<_, _> = locale
+        .entries
+        .into_iter()
+        .map(|entry| ((entry.file.clone(), entry.path.clone()), entry))
+        .collect();
+    for change in changes {
+        let entry = index
+            .get(&(change.file.as_str(), change.path.as_str()))
+            .ok_or("Source text has changed. Refresh the tab.")?;
+        if entry.segments.len() != change.texts.len() {
+            return Err("The number of color fragments has changed".into());
+        }
+        let key = (change.file.clone(), change.path.clone());
+        if change.texts.iter().all(|text| text.is_empty()) {
+            entries.remove(&key);
+            continue;
+        }
+        let segments = entry
+            .segments
             .iter()
-            .map(|entry| ((entry.file.as_str(), entry.path.as_str()), entry))
+            .zip(change.texts)
+            .map(|(part, text)| Segment {
+                color: part.color.clone(),
+                text,
+            })
             .collect();
-        let mut locale = locale(&target, &language)?;
-        let mut entries: HashMap<_, _> = locale
-            .entries
-            .into_iter()
-            .map(|entry| ((entry.file.clone(), entry.path.clone()), entry))
-            .collect();
-        for change in changes {
-            let entry = index
-                .get(&(change.file.as_str(), change.path.as_str()))
-                .ok_or("Исходный текст изменился. Обновите вкладку.")?;
-            if entry.segments.len() != change.texts.len() {
-                return Err("Число цветовых фрагментов изменилось".into());
-            }
-            let key = (change.file.clone(), change.path.clone());
-            if change.texts.iter().all(|text| text.is_empty()) {
-                entries.remove(&key);
-                continue;
-            }
-            let segments = entry
-                .segments
-                .iter()
-                .zip(change.texts)
-                .map(|(part, text)| Segment {
-                    color: part.color.clone(),
-                    text,
-                })
-                .collect();
-            entries.insert(
-                key,
-                Entry {
-                    file: entry.file.clone(),
-                    path: entry.path.clone(),
-                    segments,
-                    source_segments: Some(entry.segments.clone()),
-                },
-            );
-        }
-        locale.entries = entries.into_values().collect();
-        locale
-            .entries
-            .sort_by(|a, b| (&a.file, &a.path).cmp(&(&b.file, &b.path)));
-        let mut file = tempfile::NamedTempFile::new_in(target.parent().ok_or("Нет папки локалей")?)
-            .map_err(err)?;
-        {
-            let mut writer = BufWriter::new(file.as_file_mut());
-            serde_json::to_writer_pretty(&mut writer, &locale).map_err(err)?;
-            writer.flush().map_err(err)?;
-        }
-        file.as_file().sync_all().map_err(err)?;
-        file.persist(&target).map_err(err)?;
-        Ok(target.to_string_lossy().into_owned())
-    })
-    .await
-    .map_err(err)?
+        entries.insert(
+            key,
+            Entry {
+                file: entry.file.clone(),
+                path: entry.path.clone(),
+                segments,
+                source_segments: Some(entry.segments.clone()),
+            },
+        );
+    }
+    locale.entries = entries.into_values().collect();
+    locale
+        .entries
+        .sort_by(|a, b| (&a.file, &a.path).cmp(&(&b.file, &b.path)));
+    let mut file = tempfile::NamedTempFile::new_in(target.parent().ok_or("Locale folder is missing")?)
+        .map_err(err)?;
+    {
+        let mut writer = BufWriter::new(file.as_file_mut());
+        serde_json::to_writer_pretty(&mut writer, &locale).map_err(err)?;
+        writer.flush().map_err(err)?;
+    }
+    file.as_file().sync_all().map_err(err)?;
+    file.persist(&target).map_err(err)?;
+    Ok(target.to_string_lossy().into_owned())
 }
 
 #[derive(Serialize)]
@@ -403,144 +409,154 @@ pub async fn ide_locale_apply(
 ) -> Result<ApplyResult> {
     let scope = state.scope(id)?;
     if scope.manifest().is_none() {
-        return Err("Применить перевод можно только к проекту".into());
+        return Err("Translations can only be applied to a project".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let manifest = scope.manifest().ok_or("Нет проекта")?;
-        let target = translated_path(&scope, &language)?;
-        let locale = locale(&target, &language)?;
-        if locale.entries.is_empty() {
-            return Err("В локали нет сохранённых переводов".into());
-        }
-        let source = source(&paths(&scope, "source")?)?;
-        let source_index: HashMap<_, _> = source
-            .entries
-            .iter()
-            .map(|entry| ((entry.file.as_str(), entry.path.as_str()), entry))
-            .collect();
-        let scope_index: HashMap<_, _> = scope
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(i, entry)| (entry.path.as_str(), i))
-            .collect();
-        let mut files: std::collections::BTreeMap<&str, Vec<&Entry>> =
-            std::collections::BTreeMap::new();
-        for entry in &locale.entries {
-            files.entry(&entry.file).or_default().push(entry);
-        }
-        let total = files.len();
-        let mut result = ApplyResult {
-            updated: Vec::new(),
-            errors: Vec::new(),
-        };
-        for (completed, (file, entries)) in files.into_iter().enumerate() {
-            super::report(&app, "Применение перевода", file, completed, total);
-            let attempt = (|| -> Result<Option<usize>> {
-                let index = *scope_index.get(file).ok_or("Файл отсутствует в проекте")?;
-                let entry = &scope.entries[index];
-                let mut translations = HashMap::new();
-                for translated in entries {
-                    let original = source_index
-                        .get(&(file, translated.path.as_str()))
-                        .ok_or("Строки нет в исходном экспорте")?;
-                    if translated
-                        .source_segments
-                        .as_ref()
-                        .is_some_and(|old| old != &original.segments)
-                    {
-                        return Err(format!("Исходный текст изменился · {}", translated.path));
-                    }
-                    if translated.segments.len() != original.segments.len() {
-                        return Err(format!(
-                            "Не совпадает число фрагментов · {}",
-                            translated.path
-                        ));
-                    }
-                    if translations
-                        .insert(
-                            translated.path.as_str(),
-                            (
-                                rendered(&original.segments, None),
-                                rendered(&original.segments, Some(&translated.segments)),
-                            ),
-                        )
-                        .is_some()
-                    {
-                        return Err(format!("Повторяющийся путь · {}", translated.path));
-                    }
-                }
-                let rows = translations
-                    .keys()
-                    .filter_map(|path| {
-                        path.strip_prefix("/tasks/")?
-                            .split('/')
-                            .next()?
-                            .parse::<usize>()
-                            .ok()
-                    })
-                    .collect();
-                let mut replace = |path: &str, current: &str| -> Result<Option<String>> {
-                    let Some((original, translated)) = translations.remove(path) else {
-                        return Ok(None);
-                    };
-                    if current == translated {
-                        return Ok(None);
-                    }
-                    if current != original {
-                        return Err(format!("Текст в файле изменился · {path}"));
-                    }
-                    Ok(Some(translated))
-                };
-                let original = ide::read(&scope, index)?;
-                let basename = entry
-                    .name
-                    .rsplit(['/', '\\'])
-                    .next()
-                    .unwrap_or("")
-                    .to_ascii_lowercase();
-                let updated = if matches!(basename.as_str(), "tasks.data" | "dyn_tasks.data") {
-                    super::tasks::translate_texts(&scope, index, &original, &rows, &mut replace)?
-                } else if (basename.starts_with("elements") || basename.starts_with("gshop"))
-                    && basename.ends_with(".data")
-                {
-                    super::elements::translate_texts(&entry.name, &original, &mut replace)?
-                } else if matches!(
-                    basename.as_str(),
-                    "domain.data" | "domain2.data" | "domain2_cross.data"
-                ) {
-                    super::text_export::translate_territories(
-                        &original,
-                        basename != "domain.data",
-                        &mut replace,
-                    )?
-                } else if basename.ends_with(".txt") || basename.ends_with(".xml") {
-                    super::text_export::translate_text_file(
-                        &original,
-                        basename.ends_with(".xml"),
-                        &mut replace,
-                    )?
-                } else {
-                    return Err("Формат файла не поддерживается".into());
-                };
-                if let Some(path) = translations.keys().next() {
-                    return Err(format!("Поле не найдено · {path}"));
-                }
-                if original == updated {
-                    return Ok(None);
-                }
-                super::project::store_edit(manifest, &entry.path, &original, &updated)?;
-                Ok(Some(index))
-            })();
-            match attempt {
-                Ok(Some(index)) => result.updated.push(index),
-                Ok(None) => {}
-                Err(error) => result.errors.push(format!("{file} · {error}")),
-            }
-        }
-        super::report(&app, "Применение перевода", "Готово", total, total);
-        Ok(result)
+        apply_impl(&scope, language, &|name, completed, total| {
+            super::report(&app, "Applying translation", name, completed, total);
+        })
     })
     .await
     .map_err(err)?
+}
+
+pub(super) fn apply_impl(
+    scope: &ide::Scope,
+    language: String,
+    progress: &dyn Fn(&str, usize, usize),
+) -> Result<ApplyResult> {
+    let manifest = scope.manifest().ok_or("No project")?;
+    let target = translated_path(&scope, &language)?;
+    let locale = locale(&target, &language)?;
+    if locale.entries.is_empty() {
+        return Err("The locale has no saved translations".into());
+    }
+    let source = source(&paths(&scope, "source")?)?;
+    let source_index: HashMap<_, _> = source
+        .entries
+        .iter()
+        .map(|entry| ((entry.file.as_str(), entry.path.as_str()), entry))
+        .collect();
+    let scope_index: HashMap<_, _> = scope
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| (entry.path.as_str(), i))
+        .collect();
+    let mut files: std::collections::BTreeMap<&str, Vec<&Entry>> =
+        std::collections::BTreeMap::new();
+    for entry in &locale.entries {
+        files.entry(&entry.file).or_default().push(entry);
+    }
+    let total = files.len();
+    let mut result = ApplyResult {
+        updated: Vec::new(),
+        errors: Vec::new(),
+    };
+    for (completed, (file, entries)) in files.into_iter().enumerate() {
+        progress(file, completed, total);
+        let attempt = (|| -> Result<Option<usize>> {
+            let index = *scope_index.get(file).ok_or("File is absent from the project")?;
+            let entry = &scope.entries[index];
+            let mut translations = HashMap::new();
+            for translated in entries {
+                let original = source_index
+                    .get(&(file, translated.path.as_str()))
+                    .ok_or("The string is absent from the source export")?;
+                if translated
+                    .source_segments
+                    .as_ref()
+                    .is_some_and(|old| old != &original.segments)
+                {
+                    return Err(format!("Source text has changed · {}", translated.path));
+                }
+                if translated.segments.len() != original.segments.len() {
+                    return Err(format!(
+                        "Fragment count mismatch · {}",
+                        translated.path
+                    ));
+                }
+                if translations
+                    .insert(
+                        translated.path.as_str(),
+                        (
+                            rendered(&original.segments, None),
+                            rendered(&original.segments, Some(&translated.segments)),
+                        ),
+                    )
+                    .is_some()
+                {
+                    return Err(format!("Duplicate path · {}", translated.path));
+                }
+            }
+            let rows = translations
+                .keys()
+                .filter_map(|path| {
+                    path.strip_prefix("/tasks/")?
+                        .split('/')
+                        .next()?
+                        .parse::<usize>()
+                        .ok()
+                })
+                .collect();
+            let mut replace = |path: &str, current: &str| -> Result<Option<String>> {
+                let Some((original, translated)) = translations.remove(path) else {
+                    return Ok(None);
+                };
+                if current == translated {
+                    return Ok(None);
+                }
+                if current != original {
+                    return Err(format!("Text in the file has changed · {path}"));
+                }
+                Ok(Some(translated))
+            };
+            let original = ide::read(&scope, index)?;
+            let basename = entry
+                .name
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let updated = if matches!(basename.as_str(), "tasks.data" | "dyn_tasks.data") {
+                super::tasks::translate_texts(&scope, index, &original, &rows, &mut replace)?
+            } else if (basename.starts_with("elements") || basename.starts_with("gshop"))
+                && basename.ends_with(".data")
+            {
+                super::elements::translate_texts(&entry.name, &original, &mut replace)?
+            } else if matches!(
+                basename.as_str(),
+                "domain.data" | "domain2.data" | "domain2_cross.data"
+            ) {
+                super::text_export::translate_territories(
+                    &original,
+                    basename != "domain.data",
+                    &mut replace,
+                )?
+            } else if basename.ends_with(".txt") || basename.ends_with(".xml") {
+                super::text_export::translate_text_file(
+                    &original,
+                    basename.ends_with(".xml"),
+                    &mut replace,
+                )?
+            } else {
+                return Err("Unsupported file format".into());
+            };
+            if let Some(path) = translations.keys().next() {
+                return Err(format!("Field not found · {path}"));
+            }
+            if original == updated {
+                return Ok(None);
+            }
+            super::project::store_edit(manifest, &entry.path, &original, &updated)?;
+            Ok(Some(index))
+        })();
+        match attempt {
+            Ok(Some(index)) => result.updated.push(index),
+            Ok(None) => {}
+            Err(error) => result.errors.push(format!("{file} · {error}")),
+        }
+    }
+    progress("Done", total, total);
+    Ok(result)
 }

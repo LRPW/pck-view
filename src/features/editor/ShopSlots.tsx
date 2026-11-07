@@ -1,23 +1,27 @@
-import {Tabs} from '@chakra-ui/react';
+import {t} from "../../i18n";
+import {Box, Button, Field, Input, Select, Tabs} from "@chakra-ui/react";
+import type {ComponentProps} from "react";
 import {type CSSProperties, useState} from 'react';
+import {SelectContent, SelectItem, SelectRoot, SelectTrigger, SelectValueText} from "../../components/ui/select";
 import {ColumnDivider} from './ColumnDivider';
 import {EditorSwitch} from './EditorSwitch';
+import {selectCollection} from './select-collection';
 
 export const buyField = /^buy\[([0-3])\]\.(.+)$/;
 const maxU32 = 0xffffffff;
-const colors = ['#63e2c5', '#b99aff'];
-const types = ['Цена из файла', 'По периоду', 'По дням недели', 'По дням месяца', 'Цена с сервера'];
+const colors = ['var(--chakra-colors-teal-400)', 'var(--chakra-colors-purple-400)'];
+const types = ["Price from file", "By period", "By weekday", "By day of month", "Server price"];
 const statuses = [
-    'Обычный', 'Новинка', 'Акция', 'Рекомендуемый',
-    ...Array.from({length: 9}, (_, i) => `Скидка ${90 - i * 10}%`),
-    'Мгновенная распродажа',
-    ...Array.from({length: 6}, (_, i) => `Значок VIP ${i + 1}`),
+    "Regular", "New", "Promotion", "Recommended",
+    ...Array.from({length: 9}, (_, i) => `Discount ${90 - i * 10}%`),
+    "Flash sale",
+    ...Array.from({length: 6}, (_, i) => `VIP badge ${i + 1}`),
 ];
-const vipLevels = ['Без требования', ...Array.from({length: 6}, (_, i) => `VIP ${i + 1}`)];
+const vipLevels = ["No requirement", ...Array.from({length: 6}, (_, i) => `VIP ${i + 1}`)];
 const labels: Record<string, string> = {
-    price: 'Цена', end_time: 'Конец продаж', time: 'Срок аренды', start_time: 'Начало продаж',
-    type: 'Тип расписания', day: 'Маска дней', status: 'Статус', flag: 'Флаги',
-    min_vip_level: 'Минимальный VIP',
+    price: "Price", end_time: "Sales end", time: "Rental duration", start_time: "Sales start",
+    type: "Schedule type", day: "Day mask", status: "Status", flag: "Flags",
+    min_vip_level: "Minimum VIP",
 };
 
 type SlotField = { name: string; index: number; value: string };
@@ -32,51 +36,58 @@ function SlotInput({name, value, type, disabled, change}: {
     const label = labels[name] ?? name;
     const options = name === 'type' ? types : name === 'status' ? statuses : name === 'min_vip_level' ? vipLevels : undefined;
     const offset = name === 'type' ? -1 : 0;
-    if (options) return <select aria-label={label} value={value} disabled={disabled}
-                                onChange={event => change(event.target.value)}>
-        {!options.some((_, i) => String(i + offset) === value) && <option value={value}>{value}</option>}
-        {options.map((text, i) => <option key={i} value={i + offset}>{i + offset} · {text}</option>)}
-    </select>;
+    if (options) return <SelectRoot size="sm" lazyMount unmountOnExit minW="140px"
+                                    collection={selectCollection(<>{!options.some((_, i) => String(i + offset) === value) &&
+                                        <option value={value}>{value}</option>}{options.map((text, i) => <option
+                                        key={i} value={i + offset}>{i + offset} · {text}</option>)}</>)}
+                                    value={[String(value)]} onValueChange={async ({value: [value]}) => change(value)}
+                                    aria-label={label}
+                                    disabled={disabled}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+        <SelectItem key={select.collection.getItemValue(item)}
+                    item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot>;
 
+    const handleInputChange: ComponentProps<typeof Input>["onChange"] = event => {
+        const next = event.target.value;
+        const seconds = next ? Date.parse(next + 'Z') / 1000 : 0;
+        if (Number.isInteger(seconds) && seconds >= 0 && seconds <= maxU32) change(String(seconds));
+    };
     if (name === 'start_time' || name === 'end_time') {
         const timestamp = Number(value);
-        return <div className="shop-slot-input">
-            <input aria-label={`${label} (UTC)`} type="datetime-local" step={1} disabled={disabled}
-                   min="1970-01-01T00:00:01" max="2106-02-07T06:28:15"
-                   value={timestamp ? new Date(timestamp * 1000).toISOString().slice(0, 19) : ''}
-                   onChange={event => {
-                       const next = event.target.value;
-                       const seconds = next ? Date.parse(next + 'Z') / 1000 : 0;
-                       if (Number.isInteger(seconds) && seconds >= 0 && seconds <= maxU32) change(String(seconds));
-                   }}/>
-            <small>UTC · {timestamp || 'без ограничения'}</small>
-            {!!timestamp && <button type="button" disabled={disabled} onClick={() => change('0')}>Сбросить</button>}
-        </div>;
+        return <Box className="shop-slot-input">
+            <Field.Root width="auto"><Input aria-label={t("{value0} (UTC)", {value0: label})} type="datetime-local"
+                                            step={1}
+                                            disabled={disabled}
+                                            min="1970-01-01T00:00:01" max="2106-02-07T06:28:15"
+                                            value={timestamp ? new Date(timestamp * 1000).toISOString().slice(0, 19) : ''}
+                                            onChange={handleInputChange}/></Field.Root>
+            <small>UTC · {timestamp || "unlimited"}</small>
+            {!!timestamp && <Button type="button" disabled={disabled} onClick={() => change('0')}>{t("Reset")}</Button>}
+        </Box>;
     }
 
     const dayCount = name === 'day' ? type === '1' ? 7 : type === '2' ? 31 : 0 : 0;
     const duration = Number(value);
-    return <div className="shop-slot-input">
-        <input aria-label={label} type="number" min={0} max={maxU32} step={1} value={value}
-               disabled={disabled} onChange={event => {
+    return <Box className="shop-slot-input">
+        <Field.Root width="auto"><Input aria-label={label} type="number" min={0} max={maxU32} step={1} value={value}
+                                        disabled={disabled} onChange={event => {
             const next = event.target.value;
             if (/^\d*$/.test(next) && Number(next) <= maxU32) change(next);
-        }}/>
-        {name === 'price' && <small>0 · слот без цены</small>}
+        }}/></Field.Root>
+        {name === 'price' && <small>{t("0 · no price in slot")}</small>}
         {name === 'time' && <>
-            <small>{duration ? `сек · ${(duration / 86400).toLocaleString(undefined, {maximumFractionDigits: 3})} дн.` : '0 · бессрочно'}</small>
-            {[1, 7, 30].map(days => <button type="button" key={days} disabled={disabled}
-                                            onClick={() => change(String(days * 86400))}>{days} дн.</button>)}
+            <small>{duration ? t("seconds · {value0} days", {value0: (duration / 86400).toLocaleString(undefined, {maximumFractionDigits: 3})}) : t("0 · permanent")}</small>
+            {[1, 7, 30].map(days => <Button type="button" key={days} disabled={disabled}
+                                            onClick={() => change(String(days * 86400))}>{days} {t(" days")}</Button>)}
         </>}
-        {!!dayCount && <div className="shop-day-mask" role="group" aria-label={label}>
+        {!!dayCount && <Box className="shop-day-mask" role="group" aria-label={label}>
             {Array.from({length: dayCount}, (_, index) => {
                 const bit = 1 << index;
                 return <EditorSwitch key={index} label={String(index + 1)} showLabel disabled={disabled}
                                      checked={Boolean(Number(value) & bit)}
                                      change={() => change(String((Number(value) ^ bit) >>> 0))}/>;
             })}
-        </div>}
-    </div>;
+        </Box>}
+    </Box>;
 }
 
 export function ShopSlots({fields, draft, original, query, disabled, change, resize}: {
@@ -108,28 +119,28 @@ export function ShopSlots({fields, draft, original, query, disabled, change, res
 
     return <Tabs.Root className="shop-slots" value={available[Number(selected)] ? selected : String(first)}
                       onValueChange={event => setSelected(event.value)} size="sm" colorPalette="teal">
-        <Tabs.List aria-label="Слоты покупки">
+        <Tabs.List aria-label={t("Purchase slots")}>
             {slots.map((_, slot) => {
                 const group = repeated.indexOf(signatures[slot]);
                 const duplicates = signatures.flatMap((signature, i) => i !== slot && signature === signatures[slot] ? [i + 1] : []);
                 return <Tabs.Trigger key={slot} value={String(slot)} className="shop-slot-tab"
                                      disabled={!available[slot]}
                                      style={{'--slot-match-color': colors[group]} as CSSProperties}
-                                     title={duplicates.length ? `Совпадает со слотами ${duplicates.join(', ')}` : undefined}>
-                    Слот {slot + 1}
+                                     title={duplicates.length ? t("Matches slots {value0}", {value0: duplicates.join(', ')}) : undefined}>
+                    {t("Slot")}{slot + 1}
                 </Tabs.Trigger>;
             })}
         </Tabs.List>
         {slots.map((fields, slot) => <Tabs.Content key={slot} value={String(slot)} className="shop-slot-panel">
             {fields.filter(field => matches(field, slot)).map(({name, index, value}) =>
-                <div className={value === original[index] ? 'elements-field' : 'elements-field modified'} key={index}>
+                <Box className={value === original[index] ? 'elements-field' : 'elements-field modified'} key={index}>
                     <span>{labels[name] ?? name}<small>{name}</small></span>
-                    <ColumnDivider label="Ширина названий полей" onDelta={resize}/>
-                    <div className="elements-field-value">
+                    <ColumnDivider label={t("Field name width")} onDelta={resize}/>
+                    <Box className="elements-field-value">
                         <SlotInput name={name} value={value} type={fields.find(field => field.name === 'type')?.value}
                                    disabled={disabled} change={next => change(index, next)}/>
-                    </div>
-                </div>)}
+                    </Box>
+                </Box>)}
         </Tabs.Content>)}
     </Tabs.Root>;
 }

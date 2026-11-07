@@ -1,5 +1,7 @@
+import {t} from "../../i18n";
+import {Button, createTreeCollection, TreeView} from '@chakra-ui/react';
+import type {ComponentProps} from "react";
 import {useEffect, useMemo, useRef, useState} from 'react';
-import {createTreeCollection, TreeView} from '@chakra-ui/react';
 
 type Node = { id: string; label: string; tag: string; controlName?: string; resource?: string; children?: Node[] };
 const icons: Record<string, string> = {
@@ -17,7 +19,7 @@ function Icon({tag}: { tag: string }) {
 
 export function XmlTree({
                             doc,
-                            selection,
+                            selection, selections = [], onSelections,
                             onSelect,
                             onContext,
                             onOpen,
@@ -29,7 +31,7 @@ export function XmlTree({
     hiddenElements?: string[];
     onToggleVisibility?: (name: string) => void;
     doc: Document;
-    selection: number;
+    selection: number; selections?: number[]; onSelections?: (indices: number[]) => void;
     onSelect: (index: number) => void;
     onContext?: (index: number, x: number, y: number) => void;
     onOpen?: (index: number) => void
@@ -147,51 +149,56 @@ export function XmlTree({
                 onContext?.(Number(node.id), event.clientX, event.clientY);
             },
         };
-        const eye = node.controlName && onToggleVisibility && <button className="xml-visibility"
-                                                                      title={hiddenElements.includes(node.controlName) ? 'Показать элемент' : 'Скрыть элемент'}
-                                                                      aria-label={hiddenElements.includes(node.controlName) ? 'Показать ' + node.controlName : 'Скрыть ' + node.controlName}
+        const handleButtonClick: ComponentProps<typeof Button>["onClick"] = e => {
+            e.stopPropagation();
+            onToggleVisibility?.(node.controlName!);
+        };
+        const eye = node.controlName && onToggleVisibility && <Button className="xml-visibility"
+                                                                      title={hiddenElements.includes(node.controlName) ? t("Show element") : t("Hide element")}
+                                                                      aria-label={hiddenElements.includes(node.controlName) ? "Show " + node.controlName : "Hide " + node.controlName}
                                                                       aria-pressed={!hiddenElements.includes(node.controlName)}
                                                                       onPointerDown={e => e.stopPropagation()}
-                                                                      onClick={e => {
-                                                                          e.stopPropagation();
-                                                                          onToggleVisibility(node.controlName!);
-                                                                      }}>
+                                                                      onClick={handleButtonClick}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
                  aria-hidden="true">
                 <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/>
                 <circle cx="12" cy="12" r="3"/>
                 {hiddenElements.includes(node.controlName) && <path d="M3 3l18 18"/>}</svg>
-        </button>;
+        </Button>;
         return <TreeView.NodeProvider key={node.id} node={node} indexPath={indexPath}>
             {node.children ? <TreeView.Branch>
                 <TreeView.BranchControl {...rowProps} className="xml-tree-row"
-                                        title={node.resource ? `Открыть в новом редакторе: ${node.resource}` : node.label}>
+                                        title={node.resource ? t("Open in a new editor: {value0}", {value0: node.resource}) : node.label}>
                     <TreeView.BranchIndicator className="xml-tree-chevron">›</TreeView.BranchIndicator>
                     <Icon tag={node.tag}/><TreeView.BranchText>{node.label}</TreeView.BranchText>{eye}
                 </TreeView.BranchControl>
                 <TreeView.BranchContent>{node.children.map((child, i) => render(child, [...indexPath, i]))}</TreeView.BranchContent>
             </TreeView.Branch> : <TreeView.Item {...rowProps} className="xml-tree-row"
-                                                title={node.resource ? `Открыть в новом редакторе: ${node.resource}` : node.label}>
+                                                title={node.resource ? t("Open in a new editor: {value0}", {value0: node.resource}) : node.label}>
                 <span className="xml-tree-chevron"/><Icon
                 tag={node.tag}/><TreeView.ItemText>{node.label}</TreeView.ItemText>{eye}
                 {node.resource &&
-                    <button className="xml-resource-open" aria-label={`Открыть ${node.resource}`} onClick={event => {
-                        event.stopPropagation();
-                        onOpen?.(Number(node.id));
-                    }}>↗</button>}
+                    <Button className="xml-resource-open" aria-label={t("Open {value0}", {value0: node.resource})}
+                            onClick={event => {
+                                event.stopPropagation();
+                                onOpen?.(Number(node.id));
+                            }}>↗</Button>}
             </TreeView.Item>}
         </TreeView.NodeProvider>;
     }
 
     return <TreeView.Root className="xml-tree" collection={collection} colorPalette="teal" size="sm"
-                          selectedValue={[String(selection)]} expandedValue={expanded}
+                          selectionMode="multiple"
+                          selectedValue={(selections.length ? selections : selection >= 0 ? [selection] : []).map(String)}
+                          expandedValue={expanded}
                           onExpandedChange={details => setExpanded(details.expandedValue)}
                           onSelectionChange={details => {
-                              const id = details.selectedValue[0];
+                              onSelections?.(details.selectedValue.map(Number));
+                              const id = details.selectedValue.at(-1);
                               if (id !== undefined) onSelect(Number(id));
                           }}>
-        <TreeView.Label className="xml-tree-title">Структура XML</TreeView.Label>
+        <TreeView.Label className="xml-tree-title">{t("XML structure")}</TreeView.Label>
         <TreeView.Tree
-            aria-label="Структура интерфейса">{collection.rootNode.children?.map((node, i) => render(node, [i]))}</TreeView.Tree>
+            aria-label={t("Interface structure")}>{collection.rootNode.children?.map((node, i) => render(node, [i]))}</TreeView.Tree>
     </TreeView.Root>;
 }

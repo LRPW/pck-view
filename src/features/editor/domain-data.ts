@@ -35,7 +35,7 @@ export function readDomain(bytes: Uint8Array, nations = false): DomainData {
     let offset = 0;
 
     function take(size: number) {
-        if (size > bytes.length - offset) throw new Error('Файл domain.data обрезан');
+        if (size > bytes.length - offset) throw new Error("Truncated domain.data file");
         const start = offset;
         offset += size;
         return start;
@@ -46,7 +46,7 @@ export function readDomain(bytes: Uint8Array, nations = false): DomainData {
     function count(unit: number) {
         const length = i32();
         if (length < 0 || length > Math.floor((bytes.length - offset) / unit)) {
-            throw new Error('Некорректный размер блока domain.data');
+            throw new Error("Invalid domain.data block size");
         }
         return length;
     }
@@ -57,7 +57,7 @@ export function readDomain(bytes: Uint8Array, nations = false): DomainData {
     if (nations) {
         take(4);
         speed = view.getFloat32(take(4), true);
-        if (!Number.isFinite(speed)) throw new Error('Некорректная скорость перемещения');
+        if (!Number.isFinite(speed)) throw new Error("Invalid movement speed");
     }
     const prefix = bytes.slice(0, offset);
     const names: Uint8Array[] = [];
@@ -75,13 +75,13 @@ export function readDomain(bytes: Uint8Array, nations = false): DomainData {
             country: i32(), capital: i32(),
             positions: Array.from({length: 12}, () => view.getFloat32(take(4), true)),
         } : undefined;
-        if (extra?.positions.some(value => !Number.isFinite(value))) throw new Error(`Некорректные координаты территории ${id}`);
+        if (extra?.positions.some(value => !Number.isFinite(value))) throw new Error(`Invalid territory coordinates: ${id}`);
         const center = point();
         const vertices = Array.from({length: count(8)}, point);
         const faces = Array.from({length: count(12) * 3}, i32);
         const neighbours = Array.from({length: count(4)}, i32);
         if (faces.some(index => index < 0 || index >= vertices.length)) {
-            throw new Error(`Территория ${id} содержит неверный индекс вершины`);
+            throw new Error(`Territory ${id} has an invalid vertex index`);
         }
         return {name, id, type, reward, center, vertices, faces, neighbours, nations: extra};
     });
@@ -123,7 +123,7 @@ export function writeDomain(document: DomainData, territories: Territory[], spee
         }
         i32(item.id);
         if (document.nations) {
-            if (!item.nations) throw new Error('Нет параметров территории Войны наций');
+            if (!item.nations) throw new Error("Missing Nation Wars territory parameters");
             [item.reward, item.type, item.nations.country, item.nations.capital].forEach(i32);
             for (const value of item.nations.positions) {
                 view.setFloat32(offset, value, true);
@@ -140,5 +140,62 @@ export function writeDomain(document: DomainData, territories: Territory[], spee
         item.neighbours.forEach(i32);
     });
     raw(document.schedule);
+    return bytes;
+}
+
+export function writeDomainServer(document: DomainData, territories: Territory[], speed = document.speed) {
+    const nations = document.nations;
+    const moveSpeed = Math.max(Math.fround(0.001), Math.fround(speed ?? 1));
+    const byId = new Map(territories.map(item => [item.id, item]));
+    const schedule = document.schedule;
+    const slots = new DataView(schedule.buffer, schedule.byteOffset, schedule.byteLength).getInt32(0, true);
+    const scheduleSize = 8 + slots * 12;
+    const bytes = new Uint8Array((nations ? 8 : 4) + scheduleSize +
+        territories.reduce((sum, item) => sum + (nations ? 72 + item.neighbours.length * 8 : 16 + item.neighbours.length * 4), 0));
+    const view = new DataView(bytes.buffer);
+    let offset = 0;
+
+    function i32(value: number) {
+        view.setInt32(offset, value, true);
+        offset += 4;
+    }
+
+    if (nations) {
+        // The final four bytes of the client header are the movement speed.
+        bytes.set(document.header.subarray(document.header.length - 8, document.header.length - 4));
+        offset += 4;
+    }
+    i32(territories.length);
+    for (const item of territories) {
+        i32(item.id);
+        if (nations) {
+            if (!item.nations) throw new Error("Missing Nation Wars territory parameters");
+            [item.reward, item.type, item.nations.country, item.nations.capital].forEach(i32);
+            for (const value of item.nations.positions) {
+                view.setFloat32(offset, value, true);
+                offset += 4;
+            }
+        } else {
+            i32(item.type);
+            i32(item.reward);
+        }
+        i32(item.neighbours.length);
+        item.neighbours.forEach(i32);
+        if (nations) {
+            for (const id of item.neighbours) {
+                const neighbour = byId.get(id);
+                if (!neighbour) throw new Error(`Territory ${item.id} references missing neighbour ${id}`);
+                const dx = Math.fround(item.center[0] - neighbour.center[0]);
+                const dy = Math.fround(item.center[1] - neighbour.center[1]);
+                const distance = Math.fround(Math.sqrt(dx * dx + dy * dy));
+                const seconds = Math.max(1, Math.ceil(Math.fround(distance / moveSpeed)));
+                if (seconds > 2147483647 || !Number.isFinite(seconds)) {
+                    throw new Error(`Travel time ${item.id} → ${id} exceeds the format limit`);
+                }
+                i32(seconds);
+            }
+        }
+    }
+    bytes.set(schedule.subarray(0, scheduleSize), offset);
     return bytes;
 }

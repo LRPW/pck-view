@@ -1,9 +1,11 @@
-import {ResourceLoading} from "./ResourceLoading";
-import {NativeGfxPreview} from "./NativeGfxPreview";
-import {keys, random, sampleKey} from "./gfx-animation";
+import {t} from "../../i18n";
+import {Box, Button} from "@chakra-ui/react";
 import {useEffect, useMemo, useState} from 'react';
 import {useResourceInvoke} from '../editor/resource-context';
 import {useInterfaceTextures} from './InterfaceTextures';
+import {NativeGfxPreview} from "./NativeGfxPreview";
+import {ResourceLoading} from "./ResourceLoading";
+import {keys, random, sampleKey} from "./gfx-animation";
 
 function LegacyGfxPreview({bytes, file, entries = [], embedded = false}: {
     bytes?: number[];
@@ -97,7 +99,7 @@ function LegacyGfxPreview({bytes, file, entries = [], embedded = false}: {
         return () => cancelAnimationFrame(frame);
     }, [playing]);
     const unsupported = model?.elements.filter(e => !e.supported).length ?? 0;
-    return <div style={{
+    return <Box style={{
         position: embedded ? 'absolute' : 'relative',
         inset: embedded ? 0 : undefined,
         flex: 1,
@@ -105,19 +107,22 @@ function LegacyGfxPreview({bytes, file, entries = [], embedded = false}: {
         overflow: 'hidden',
         pointerEvents: embedded ? 'none' : undefined
     }}>
-        {!embedded && <div style={{position: 'relative', zIndex: 2}}>
-            <button onClick={() => setPlaying(p => !p)}>{playing ? 'Пауза' : 'Воспроизвести'}</button>
-            <button onClick={() => setTime(0)}>Сначала</button>
-            · Частичная поддержка GFX: 2D decal, ключи положения/масштаба/угла/альфа, точечные частицы без аффекторов.
-        </div>}
+        {!embedded && <Box style={{position: 'relative', zIndex: 2}}>
+            <Button onClick={() => setPlaying(p => !p)}>{playing ? t("Pause") : t("Play")}</Button>
+            <Button onClick={() => setTime(0)}>{t("Restart")}</Button>
+            {t("· Partial GFX support: 2D decals, position/scale/angle/alpha keys, point particles without affectors.")}
+        </Box>}
         {(error || (model && !model.elements.length)) &&
-            <span>{error || 'Формат GFX не поддерживается (нет текстовых GFXELEMENTID)'}</span>}
+            <span>{error || "Unsupported GFX format (no text GFXELEMENTID)"}</span>}
         {unsupported > 0 &&
-            <span style={{fontSize: 10, color: '#ffce67'}}>Неподдержанных слоёв GFX: {unsupported}</span>}
+            <span style={{
+                fontSize: 10,
+                color: 'var(--chakra-colors-fg-warning)'
+            }}>{t("Unsupported GFX layers: ")}{unsupported}</span>}
         {loading &&
-            <ResourceLoading label="Загрузка текстур эффекта" completed={progress.completed} total={progress.total}
+            <ResourceLoading label={t("Loading effect textures")} completed={progress.completed} total={progress.total}
                              detail={progress.current}/>}
-        {!embedded && missing.length > 0 && <div>Не найдены текстуры GFX: {missing.join(', ')}</div>}
+        {!embedded && missing.length > 0 && <Box>{t("Missing GFX textures: ")}{missing.join(', ')}</Box>}
         {model?.elements.filter(e => e.supported).map((e, i) => {
             const texture = textures[e.path];
             if (!texture || time < e.start) return null;
@@ -159,7 +164,7 @@ function LegacyGfxPreview({bytes, file, entries = [], embedded = false}: {
                 mixBlendMode: e.additive ? 'screen' : 'normal'
             }}/>);
         })}
-    </div>;
+    </Box>;
 }
 
 export function GfxPreview(props: {
@@ -169,5 +174,5 @@ export function GfxPreview(props: {
     embedded?: boolean
 }) {
     return props.file ? <NativeGfxPreview file={props.file} embedded={props.embedded}/> :
-        <LegacyGfxPreview {...props}/>;
+        <LegacyGfxPreview {...props} />;
 }

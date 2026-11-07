@@ -1,6 +1,12 @@
-import {useEffect, useRef, useState} from 'react';
-import {useResourceActive, useResourceInvoke} from '../editor/resource-context';
+import {notifications} from '../../app/notifications';
+import {message, t} from "../../i18n";
+import {Alert, Box, Button, Field, Select} from "@chakra-ui/react";
 import {save} from '@tauri-apps/plugin-dialog';
+import type {ComponentProps} from "react";
+import {useEffect, useRef, useState} from 'react';
+import {SelectContent, SelectItem, SelectRoot, SelectTrigger, SelectValueText} from "../../components/ui/select";
+import {useResourceActive, useResourceInvoke} from '../editor/resource-context';
+import {selectCollection} from '../editor/select-collection';
 import {ResourceLoading} from './ResourceLoading';
 
 export function NativeGfxPreview({file, embedded = false}: { file: string; embedded?: boolean }) {
@@ -34,7 +40,7 @@ export function NativeGfxPreview({file, embedded = false}: { file: string; embed
     const drag = useRef<{ x: number; y: number } | undefined>(undefined);
     const playing = useRef(true), restart = useRef(false);
     const [paused, setPaused] = useState(false), [error, setError] = useState('');
-    const [loading, setLoading] = useState('Загрузка ресурса…');
+    const [loading, setLoading] = useState(t("Loading resource…"));
     useEffect(() => {
         setExportStatus('');
         session.current = undefined;
@@ -47,8 +53,29 @@ export function NativeGfxPreview({file, embedded = false}: { file: string; embed
         orbit.current = [Math.PI / 4, Math.atan(0.6 / Math.sqrt(2)), 1];
         let disposed = false, id: number | undefined, timer: ReturnType<typeof setTimeout>;
         setError('');
-        setLoading('Загрузка ресурса…');
+        setLoading(t("Loading resource…"));
         canvas.current?.getContext('2d')?.clearRect(0, 0, 512, 512);
+        const fail = (reason: unknown) => {
+            if (disposed) return;
+            const details = String(reason);
+            setLoading('');
+            setError(details);
+            if (embedded) {
+                notifications.create({
+                    id: 'gfx-error:' + file,
+                    type: 'error',
+                    title: t('Error'),
+                    description: message(details)
+                });
+            }
+            if (id !== undefined) {
+                const failedSession = id;
+                id = undefined;
+                session.current = undefined;
+                void invoke('native_gfx_close', {id: failedSession}).catch(() => {
+                });
+            }
+        };
         void (async () => {
             try {
                 id = await invoke<number>('native_gfx_create', {name: file, embedded});
@@ -62,7 +89,7 @@ export function NativeGfxPreview({file, embedded = false}: { file: string; embed
                     if (disposed) return;
                     setAnimations(actions);
                 }
-                setLoading('Подготовка первого кадра…');
+                setLoading(t("Preparing the first frame…"));
                 let previous = performance.now();
                 const frame = async () => {
                     if (disposed) return;
@@ -87,7 +114,7 @@ export function NativeGfxPreview({file, embedded = false}: { file: string; embed
                             animation: action ?? null
                         });
                         const bytes = new Uint8ClampedArray(buffer);
-                        if (bytes.length !== width * height * 4) throw Error(`Invalid native GFX frame: ${bytes.length} bytes`);
+                        if (bytes.length !== width * height * 4) throw Error(t("Invalid native GFX frame: {value0} bytes", {value0: bytes.length}));
                         if (disposed) return;
                         const ctx = canvas.current?.getContext('2d');
                         if (ctx) {
@@ -108,12 +135,12 @@ export function NativeGfxPreview({file, embedded = false}: { file: string; embed
                         }
                         timer = setTimeout(() => void frame(), 50);
                     } catch (e) {
-                        if (!disposed) setError(String(e));
+                        fail(e);
                     }
                 };
                 await frame();
             } catch (e) {
-                if (!disposed) setError(String(e));
+                fail(e);
             }
         })();
         return () => {
@@ -123,7 +150,44 @@ export function NativeGfxPreview({file, embedded = false}: { file: string; embed
             if (id !== undefined) void invoke('native_gfx_close', {id});
         };
     }, [file, embedded]);
-    return <div style={{
+    const handleButtonClick: ComponentProps<typeof Button>["onClick"] = async () => {
+        const id = session.current;
+        if (id === undefined) return;
+        setExporting(true);
+        setExportStatus('');
+        try {
+            const path = await save({
+                defaultPath: (file.split(/[\\/]/).pop() ?? 'model').replace(/\.[^.]+$/, '.glb'),
+                filters: [{name: 'glTF Binary', extensions: ['glb']}]
+            });
+            if (!path) return;
+            await invoke('native_gfx_export_glb', {id, path});
+            setExportStatus(t("GLB saved"));
+        } catch (e) {
+            setExportStatus(String(e));
+        } finally {
+            setExporting(false);
+        }
+    };
+    const handleDivPointerDown: ComponentProps<"div">["onPointerDown"] = e => {
+        if (!isModel || e.button !== 0) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        drag.current = {x: e.clientX, y: e.clientY};
+    };
+    const handleDivPointerMove: ComponentProps<"div">["onPointerMove"] = e => {
+        if (!drag.current) return;
+        const [yaw, pitch, zoom] = orbit.current;
+        orbit.current = [yaw - (e.clientX - drag.current.x) * 0.01, Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - drag.current.y) * 0.01)), zoom];
+        drag.current = {x: e.clientX, y: e.clientY};
+    };
+    const handleDivWheel: ComponentProps<"div">["onWheel"] = e => {
+        if (!isModel) return;
+        e.stopPropagation();
+        orbit.current = [orbit.current[0], orbit.current[1], Math.max(0.1, Math.min(10, orbit.current[2] * Math.exp(e.deltaY * 0.001)))];
+    };
+    if (embedded && error) return null;
+    return <Box style={{
         position: embedded ? 'absolute' : 'relative',
         inset: embedded ? 0 : undefined,
         flex: 1,
@@ -132,106 +196,70 @@ export function NativeGfxPreview({file, embedded = false}: { file: string; embed
         flexDirection: 'column',
         pointerEvents: embedded ? 'none' : undefined
     }}>
-        {!embedded && <div className="native-preview-toolbar">
-            <div className="native-preview-actions" role="group" aria-label="Управление предпросмотром">
-                <button disabled={!!loading || !!error} aria-pressed={paused} onClick={() => {
+        {!embedded && <Box className="native-preview-toolbar">
+            <Box className="native-preview-actions" role="group" aria-label={t("Preview controls")}>
+                <Button disabled={!!loading || !!error} aria-pressed={paused} onClick={() => {
                     playing.current = !playing.current;
                     setPaused(!playing.current);
-                }}><span aria-hidden="true">{paused ? '▶' : 'Ⅱ'}</span>{paused ? 'Продолжить' : 'Пауза'}</button>
-                <button disabled={!!loading || !!error} onClick={() => {
+                }}><span aria-hidden="true">{paused ? '▶' : 'Ⅱ'}</span>{paused ? t("Resume") : t("Pause")}</Button>
+                <Button disabled={!!loading || !!error} onClick={() => {
                     restart.current = true;
                 }}>
-                    <span aria-hidden="true">↺</span>Сначала
-                </button>
-                {isModel && <button disabled={!!loading || !!error} onClick={() => {
+                    <span aria-hidden="true">↺</span>{t("Restart")}</Button>
+                {isModel && <Button disabled={!!loading || !!error} onClick={() => {
                     orbit.current = [Math.PI / 4, Math.atan(0.6 / Math.sqrt(2)), 1];
-                }}><span aria-hidden="true">⌖</span>Сброс камеры</button>}
-            </div>
-            {hasAnimations && <label className="native-animation-picker">Анимация
-                <select aria-label="Анимация STCK" disabled={!!loading || !!error || !animations.length}
-                        value={animation} onChange={e => {
-                    setAnimation(e.target.value);
-                    pendingAnimation.current = e.target.value === '' ? 0xffffffff : Number(e.target.value);
-                }}>
-                    <option value="">{animations.length ? 'Без анимации' : 'Нет связанных анимаций'}</option>
-                    {animations.map((action, index) => <option key={index} value={index}>{action.name}</option>)}
-                </select>
-                {animation !== '' &&
-                    <span title={animations[Number(animation)]?.track}>{animations[Number(animation)]?.track}</span>}
-            </label>}
-            {isModel && !/\.bon$/i.test(file) && <div className="native-preview-actions">
-                <button disabled={!!loading || !!error || exporting}
-                        title="Геометрия, текстуры, скелет и все связанные анимации" onClick={async () => {
-                    const id = session.current;
-                    if (id === undefined) return;
-                    setExporting(true);
-                    setExportStatus('');
-                    try {
-                        const path = await save({
-                            defaultPath: (file.split(/[\\/]/).pop() ?? 'model').replace(/\.[^.]+$/, '.glb'),
-                            filters: [{name: 'glTF Binary', extensions: ['glb']}]
-                        });
-                        if (!path) return;
-                        await invoke('native_gfx_export_glb', {id, path});
-                        setExportStatus('GLB сохранён');
-                    } catch (e) {
-                        setExportStatus(String(e));
-                    } finally {
-                        setExporting(false);
-                    }
-                }}>{exporting ? 'Экспорт…' : 'Экспорт GLB'}</button>
-            </div>}
+                }}><span aria-hidden="true">⌖</span>{t("Reset camera")}</Button>}
+            </Box>
+            {hasAnimations && <Field.Root width="auto"
+                                          className="native-animation-picker"><Field.Label>{t("Animation")}{animation !== '' &&
+                <span
+                    title={animations[Number(animation)]?.track}>{animations[Number(animation)]?.track}</span>}</Field.Label><SelectRoot
+                size="sm" lazyMount unmountOnExit minW="140px" collection={selectCollection(<>
+                <option value="">{animations.length ? t("No animation") : t("No linked animations")}</option>
+                {animations.map((action, index) => <option key={index} value={index}>{action.name}</option>)}</>)}
+                value={[String(animation)]} onValueChange={async ({value: [value]}) => {
+                setAnimation(value);
+                pendingAnimation.current = value === '' ? 0xffffffff : Number(value);
+            }} aria-label={t("STCK animation")}
+                disabled={!!loading || !!error || !animations.length}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                <SelectItem key={select.collection.getItemValue(item)}
+                            item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot></Field.Root>}
+            {isModel && !/\.bon$/i.test(file) && <Box className="native-preview-actions">
+                <Button disabled={!!loading || !!error || exporting}
+                        title={t("Geometry, textures, skeleton and all linked animations")}
+                        onClick={handleButtonClick}>{exporting ? t("Export…") : t("Export GLB")}</Button>
+            </Box>}
             {exportStatus && <span role="status" className="native-preview-hint">{exportStatus}</span>}
-            <div className="native-preview-status"
+            <Box className="native-preview-status"
                  data-state={error ? 'error' : loading ? 'loading' : paused ? 'paused' : 'ready'} role="status"
                  aria-live="polite">
                 <span className="native-preview-status-dot" aria-hidden="true"/>
                 <span className="native-preview-engine">gfx-native</span>
-                <span>{error ? 'Ошибка' : loading || (paused ? 'Пауза' : 'Работает')}</span>
-            </div>
-            {isModel && <span className="native-preview-hint">Перетаскивание — вращение · Колесо — масштаб</span>}
-        </div>}
-        <div ref={viewport} className={isModel ? 'native-model-viewport' : undefined} onPointerDown={e => {
-            if (!isModel || e.button !== 0) return;
-            e.preventDefault();
-            e.currentTarget.setPointerCapture(e.pointerId);
-            drag.current = {x: e.clientX, y: e.clientY};
-        }}
-             onPointerMove={e => {
-                 if (!drag.current) return;
-                 const [yaw, pitch, zoom] = orbit.current;
-                 orbit.current = [yaw - (e.clientX - drag.current.x) * 0.01, Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - drag.current.y) * 0.01)), zoom];
-                 drag.current = {x: e.clientX, y: e.clientY};
-             }}
+                <span>{error ? t("Error") : loading || (paused ? t("Pause") : t("Running"))}</span>
+            </Box>
+            {isModel && <span className="native-preview-hint">{t("Drag to rotate · Scroll to zoom")}</span>}
+        </Box>}
+        <Box ref={viewport} className={isModel ? 'native-model-viewport' : undefined}
+             onPointerDown={handleDivPointerDown}
+             onPointerMove={handleDivPointerMove}
              onPointerUp={() => {
                  drag.current = undefined;
              }} onLostPointerCapture={() => {
             drag.current = undefined;
         }}
-             onWheel={e => {
-                 if (!isModel) return;
-                 e.stopPropagation();
-                 orbit.current = [orbit.current[0], orbit.current[1], Math.max(0.1, Math.min(10, orbit.current[2] * Math.exp(e.deltaY * 0.001)))];
-             }}
+             onWheel={handleDivWheel}
              style={{
                  position: 'relative',
                  flex: 1,
                  minHeight: 0,
                  overflow: embedded ? 'visible' : 'hidden',
-                 background: embedded ? undefined : '#000',
+                 background: embedded ? undefined : 'var(--chakra-colors-black)',
                  touchAction: isModel ? 'none' : undefined
              }}>
-            {loading && !error && <div className="gfx-loading"><ResourceLoading label={loading} detail={file}/></div>}
+            {loading && !error && <Box className="gfx-loading"><ResourceLoading label={loading} detail={file}/></Box>}
             {error &&
-                <p role="alert" style={{
-                    position: 'relative',
-                    zIndex: 1,
-                    color: '#ffb4a4',
-                    fontSize: 12,
-                    whiteSpace: 'pre-wrap',
-                    overflowWrap: 'anywhere',
-                    padding: 12
-                }}>{error}</p>}
+                <Alert.Root status="error" size="sm"
+                            role="alert"><Alert.Indicator/><Alert.Content>{message(error)}</Alert.Content></Alert.Root>}
             <canvas
                 ref={canvas} width={512} height={512} style={{
                 position: 'absolute',
@@ -247,6 +275,6 @@ export function NativeGfxPreview({file, embedded = false}: { file: string; embed
                 mixBlendMode: embedded ? 'screen' : undefined,
                 pointerEvents: 'none'
             }}/>
-        </div>
-    </div>;
+        </Box>
+    </Box>;
 }

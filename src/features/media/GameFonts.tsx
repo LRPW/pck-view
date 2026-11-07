@@ -1,7 +1,7 @@
 import {createContext, useContext, useEffect, useState} from 'react';
 import {useResourceInvoke} from '../editor/resource-context';
-import {canonicalFontName, UI_FONTS} from './ui-fonts';
 import {fontNames} from './font-names';
+import {canonicalFontName, UI_FONTS} from './ui-fonts';
 
 export const GameFonts = createContext<Record<string, string>>({});
 const cache = new Map<string, Promise<{ names: Record<string, string>; failed: string[] }>>();

@@ -19,3 +19,6 @@ target/
 *.obj
 *.log
 !/native-gfx/main.cpp
+
+# Local update signing keys
+/.release-signing/

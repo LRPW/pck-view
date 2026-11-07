@@ -1,6 +1,6 @@
-use super::{background, err, ide, project, search, Result};
+use super::{background, err, ide, project, search, search_data, Result};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::atomic::Ordering, time::Instant};
+use std::{sync::atomic::Ordering, time::Instant};
 use tauri::Emitter;
 
 #[derive(Deserialize)]
@@ -10,7 +10,6 @@ pub(super) struct Request {
     scope_id: Option<u64>,
     module: String,
     directory: String,
-    disk: bool,
     query: String,
     mask: String,
     regexp: bool,
@@ -22,6 +21,7 @@ pub(super) struct Request {
 struct Hit {
     source: Option<String>,
     path: String,
+    structured: bool,
     hit: search::SearchHit,
 }
 
@@ -93,7 +93,7 @@ pub(super) fn decode(data: &[u8]) -> (std::borrow::Cow<'_, str>, &'static str) {
     } else {
         (encoding_rs::GBK, "gbk")
     };
-    (codec.decode_without_bom_handling(data).0, name)
+    (codec.decode(data).0, name)
 }
 
 #[tauri::command]
@@ -110,25 +110,23 @@ pub(super) async fn ide_search(
         request.whole_word,
     )?;
     let mask = mask_filter(&request.mask)?;
-    let scope = if request.disk {
-        None
-    } else {
-        Some(state.scope(request.scope_id.ok_or("Выберите проект или архив")?)?)
-    };
-    let cancellation = control.token();
-    background(app, "Поиск по содержимому", move |app| {
+    let cancellation = control.token(request.search_id);
+    let scope = Some(state.scope(request.scope_id.ok_or("Select a project or archive")?)?);
+    background(app, "Content search", move |app| {
         let cancelled = || cancellation.load(Ordering::Relaxed) == request.search_id;
         let mut candidates = Vec::new();
         let mut project_read = None;
+        let mut elements_profile = None;
         let mut source = None;
         let allowed = |path: &str| {
             let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
-            !search::known_binary(name) && mask.as_ref().is_none_or(|mask| mask.is_match(name))
+            (search_data::supported(name) || !search::known_binary(name)) && mask.as_ref().is_none_or(|mask| mask.is_match(name) || path.split(['/', '\\']).any(|part| part.to_ascii_lowercase().ends_with(".pck") && mask.is_match(part)))
         };
         if let Some(scope) = &scope {
             source = Some(scope.path()?);
             if let Some(manifest) = scope.manifest() {
                 project_read = Some(project::search_reader(manifest)?);
+                elements_profile = project::data_profiles(manifest)?.1;
             }
             let module = folder_prefix(&request.module);
             let directory = folder_prefix(&request.directory);
@@ -141,42 +139,10 @@ pub(super) async fn ide_search(
                 if normalized.starts_with(&module)
                     && (normalized.starts_with(&directory)
                         || entry.name.replace('\\', "/").to_lowercase().starts_with(&directory))
-                    && allowed(&path)
+                    && allowed(&format!("{}/{}", source.as_deref().unwrap_or(""), path))
                     && entry.size <= 256 * 1024 * 1024
                 {
                     candidates.push((index, path));
-                }
-            }
-        } else {
-            let root = PathBuf::from(&request.directory)
-                .canonicalize()
-                .map_err(err)?;
-            if !root.is_dir() {
-                return Err("Выберите папку".into());
-            }
-            let mut directories = vec![root];
-            while let Some(dir) = directories.pop() {
-                if cancelled() {
-                    break;
-                }
-                for entry in std::fs::read_dir(dir).map_err(err)? {
-                    if cancelled() {
-                        break;
-                    }
-                    let entry = entry.map_err(err)?;
-                    let path = entry.path();
-                    if super::reject_link(&path).is_err() {
-                        continue;
-                    }
-                    let metadata = entry.metadata().map_err(err)?;
-                    if metadata.is_dir() {
-                        directories.push(path);
-                    } else if metadata.is_file()
-                        && metadata.len() <= 256 * 1024 * 1024
-                        && allowed(&path.to_string_lossy())
-                    {
-                        candidates.push((0, path.to_string_lossy().into_owned()));
-                    }
                 }
             }
         }
@@ -204,9 +170,24 @@ pub(super) async fn ide_search(
                 break;
             }
             if let Ok(bytes) = bytes {
-                let (text, encoding) = decode(&bytes);
+                let structured = search_data::supported(&path);
+                let projected;
+                let (text, encoding) = if structured {
+                    match search_data::project(&path, bytes, elements_profile.as_ref(), &cancelled) {
+                        Ok(value) => projected = value,
+                        Err(_) if cancelled() => break,
+                        Err(_) => { result.unreadable += 1; continue; }
+                    }
+                    (std::borrow::Cow::Borrowed(projected.as_str()), "utf-8")
+                } else {
+                    let (text, encoding) = decode(&bytes);
+                    if text.chars().any(|c| c == '\u{fffd}' || (c.is_control() && !matches!(c, '\n' | '\r' | '\t'))) { continue; }
+                    (std::borrow::Cow::Owned(text.into_owned()), encoding)
+                };
+                if cancelled() { break; }
                 let mut hits = Vec::new();
-                let file_limit = search::collect_hits(&text, &matcher, index, encoding, &mut hits);
+                let file_limit = search::collect_hits_cancellable(&text, &matcher, index, encoding, &mut hits, &cancelled);
+                if cancelled() { break; }
                 let remaining = 5000 - result.matches.len();
                 result.truncated = file_limit || hits.len() > remaining;
                 result
@@ -214,13 +195,14 @@ pub(super) async fn ide_search(
                     .extend(hits.into_iter().take(remaining).map(|hit| Hit {
                         source: source.clone(),
                         path: path.clone(),
+                        structured,
                         hit,
                     }));
             } else {
                 result.unreadable += 1;
             }
             if last_emit.elapsed().as_millis() >= 100 || position + 1 == total {
-                super::report(&app, "Поиск по содержимому", &path, position + 1, total);
+                let _ = app.emit("ide-search-progress", (request.search_id, position + 1, total, &path));
                 if sent < result.matches.len() {
                     let _ = app.emit(
                         "ide-search-batch",

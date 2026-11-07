@@ -31,25 +31,25 @@ pub(super) fn provider_url(provider: &str, endpoint: &str) -> Result<String> {
     let base = endpoint.trim().trim_end_matches('/');
     if provider == "deepl" {
         if !matches!(base, "https://api.deepl.com" | "https://api-free.deepl.com") {
-            return Err("Выберите официальный адрес DeepL".into());
+            return Err("Select an official DeepL endpoint".into());
         }
         return Ok(format!("{base}/v2/translate"));
     }
     let (scheme, rest) = base
         .split_once("://")
-        .ok_or("Укажите адрес сервера с https:// или http://")?;
+        .ok_or("Specify a server URL starting with https:// or http://")?;
     let authority = rest.split('/').next().unwrap_or("");
     if authority.is_empty()
         || base.contains(['?', '#', '@', '\\'])
         || base.chars().any(char::is_whitespace)
     {
-        return Err("Некорректный адрес сервера перевода".into());
+        return Err("Invalid translation server URL".into());
     }
     static LOCAL: OnceLock<Regex> = OnceLock::new();
     let local = LOCAL
         .get_or_init(|| Regex::new(r"(?i)^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$").unwrap());
     if scheme != "https" && (scheme != "http" || !local.is_match(authority)) {
-        return Err("Для удалённого сервера нужен HTTPS".into());
+        return Err("Remote servers require HTTPS".into());
     }
     Ok(format!("{base}/chat/completions"))
 }
@@ -108,7 +108,7 @@ fn post(
     );
     if let Some(value) = authorization {
         if value.chars().any(char::is_control) {
-            return Err("Некорректный ключ API".into());
+            return Err("Invalid API key".into());
         }
         config.push_str(&format!(
             "header = {}\n",
@@ -117,13 +117,13 @@ fn post(
     }
     let mut child = command
         .spawn()
-        .map_err(|_| "Не удалось запустить системный curl".to_owned())?;
+        .map_err(|_| "Failed to start system curl".to_owned())?;
     let written = child
         .stdin
         .take()
-        .ok_or("Недоступен вход curl")?
+        .ok_or("curl input is unavailable")?
         .write_all(config.as_bytes());
-    let mut stdout = child.stdout.take().ok_or("Недоступен выход curl")?;
+    let mut stdout = child.stdout.take().ok_or("curl output is unavailable")?;
     let read = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         stdout.read_to_end(&mut bytes)?;
@@ -134,7 +134,7 @@ fn post(
             let _ = child.kill();
             let _ = child.wait();
             let _ = read.join();
-            return Err("Перевод остановлен".into());
+            return Err("Translation stopped".into());
         }
         if let Some(status) = child.try_wait().map_err(err)? {
             break status;
@@ -143,21 +143,21 @@ fn post(
     };
     let output = read
         .join()
-        .map_err(|_| "Не удалось прочитать ответ провайдера")?
+        .map_err(|_| "Failed to read the provider response")?
         .map_err(err)?;
-    written.map_err(|_| "Не удалось отправить запрос провайдеру".to_owned())?;
+    written.map_err(|_| "Failed to send the provider request".to_owned())?;
     if !status.success() {
         return Err(format!(
-            "Запрос к провайдеру не выполнен (curl {})",
+            "Provider request failed (curl {})",
             status.code().unwrap_or(-1)
         ));
     }
     let output = String::from_utf8(output).map_err(err)?;
-    let (body, status) = output.rsplit_once('\n').ok_or("Нет статуса HTTP")?;
+    let (body, status) = output.rsplit_once('\n').ok_or("Missing HTTP status")?;
     if !status.starts_with('2') {
-        return Err(format!("Провайдер вернул HTTP {status}"));
+        return Err(format!("Provider returned HTTP {status}"));
     }
-    serde_json::from_str(body).map_err(|_| "Провайдер вернул некорректный JSON".into())
+    serde_json::from_str(body).map_err(|_| "Provider returned invalid JSON".into())
 }
 
 pub(super) fn translate(
@@ -170,17 +170,17 @@ pub(super) fn translate(
         settings.provider.as_str(),
         "deepl" | "yandex" | "ollama" | "compatible"
     ) {
-        return Err("Неизвестный провайдер перевода".into());
+        return Err("Unknown translation provider".into());
     }
     if texts.is_empty() || texts.len() > 50 || texts.iter().map(String::len).sum::<usize>() > 32_000
     {
-        return Err("Строка слишком велика для одного запроса".into());
+        return Err("String is too large for one request".into());
     }
     if target.is_empty()
         || target.len() > 24
         || !target.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-')
     {
-        return Err("Некорректный код языка перевода".into());
+        return Err("Invalid target language code".into());
     }
     let url = provider_url(&settings.provider, &settings.endpoint)?;
     let input: Vec<_> = texts
@@ -194,7 +194,7 @@ pub(super) fn translate(
     let result: Vec<String> = if settings.provider == "yandex" {
         let key = settings.api_key.trim();
         if key.is_empty() {
-            return Err("Введите API-ключ сервисного аккаунта Yandex Translate".into());
+            return Err("Enter a Yandex Translate service-account API key".into());
         }
         let language = |value: &str| {
             value
@@ -212,11 +212,11 @@ pub(super) fn translate(
             || !source.bytes().all(|byte| byte.is_ascii_alphabetic())
         {
             return Err(
-                "Для Yandex Translate укажите короткий код языка, например en или ru".into(),
+                "Use a short language code for Yandex Translate, such as en or ru".into(),
             );
         }
         if input.iter().map(|text| text.chars().count()).sum::<usize>() > 10_000 {
-            return Err("Строка слишком велика для одного запроса Yandex Translate".into());
+            return Err("String is too large for one Yandex Translate request".into());
         }
         let mut payload = json!({"texts":input,"targetLanguageCode":target,"format":"PLAIN_TEXT"});
         if !source.is_empty() {
@@ -224,7 +224,7 @@ pub(super) fn translate(
         }
         if !settings.glossary.trim().is_empty() {
             if source.is_empty() {
-                return Err("Для глоссария Яндекса укажите исходный язык".into());
+                return Err("Specify the source language for the Yandex glossary".into());
             }
             let mut pairs = Vec::new();
             for line in settings
@@ -234,9 +234,9 @@ pub(super) fn translate(
             {
                 let (from, to) = line
                     .split_once('=')
-                    .ok_or("Строка глоссария должна иметь вид исходный текст = перевод")?;
+                    .ok_or("A glossary line must have the form source text = translation")?;
                 if from.trim().is_empty() || to.trim().is_empty() {
-                    return Err("В глоссарии есть пустой термин".into());
+                    return Err("The glossary contains an empty term".into());
                 }
                 pairs.push(json!({"sourceText":from.trim(),"translatedText":to.trim()}));
             }
@@ -249,25 +249,25 @@ pub(super) fn translate(
                         > 10_000
                 })
             {
-                return Err("Глоссарий Яндекса превышает лимит API".into());
+                return Err("The Yandex glossary exceeds the API limit".into());
             }
             payload["glossaryConfig"] = json!({"glossaryData":{"glossaryPairs":pairs}});
         }
         let response = post(&url, Some(format!("Api-Key {key}")), payload, cancel)?;
         response["translations"]
             .as_array()
-            .ok_or("В ответе Яндекса нет переводов")?
+            .ok_or("The Yandex response has no translations")?
             .iter()
             .map(|entry| {
                 entry["text"]
                     .as_str()
                     .map(str::to_owned)
-                    .ok_or_else(|| "В ответе Яндекса нет текста".into())
+                    .ok_or_else(|| "The Yandex response has no text".into())
             })
             .collect::<Result<Vec<_>>>()?
     } else if settings.provider == "deepl" {
         if settings.api_key.trim().is_empty() {
-            return Err("Введите ключ DeepL".into());
+            return Err("Enter a DeepL key".into());
         }
         let mut payload = json!({"text":input,"target_lang":target.to_ascii_uppercase(),"context":texts.join("")});
         if !settings.source.trim().is_empty() {
@@ -275,7 +275,7 @@ pub(super) fn translate(
         }
         if !settings.glossary.trim().is_empty() {
             if settings.source.trim().is_empty() {
-                return Err("Для словаря DeepL укажите исходный язык".into());
+                return Err("Specify the source language for the DeepL glossary".into());
             }
             payload["glossary_id"] = json!(settings.glossary.trim());
         }
@@ -287,18 +287,18 @@ pub(super) fn translate(
         )?;
         response["translations"]
             .as_array()
-            .ok_or("В ответе DeepL нет переводов")?
+            .ok_or("The DeepL response has no translations")?
             .iter()
             .map(|entry| {
                 entry["text"]
                     .as_str()
                     .map(str::to_owned)
-                    .ok_or_else(|| "В ответе DeepL нет текста".into())
+                    .ok_or_else(|| "The DeepL response has no text".into())
             })
             .collect::<Result<Vec<_>>>()?
     } else {
         if settings.model.trim().is_empty() {
-            return Err("Укажите модель перевода".into());
+            return Err("Specify a translation model".into());
         }
         let context = json!({"source_language":settings.source.trim(),"target_language":target,
             "context":texts.join(""),"fragments":input,"glossary":settings.glossary});
@@ -310,7 +310,7 @@ pub(super) fn translate(
         let response = post(&url, authorization, payload, cancel)?;
         let answer = response["choices"][0]["message"]["content"]
             .as_str()
-            .ok_or("Модель не вернула текст")?
+            .ok_or("The model returned no text")?
             .trim();
         let answer = answer
             .strip_prefix("```json")
@@ -318,10 +318,10 @@ pub(super) fn translate(
             .and_then(|text| text.strip_suffix("```"))
             .unwrap_or(answer)
             .trim();
-        serde_json::from_str(answer).map_err(|_| "Модель не вернула массив строк".to_owned())?
+        serde_json::from_str(answer).map_err(|_| "The model did not return a string array".to_owned())?
     };
     if result.len() != input.len() {
-        return Err("Провайдер изменил число фрагментов".into());
+        return Err("Provider changed the fragment count".into());
     }
     let mut translated = result.into_iter();
     texts
@@ -330,9 +330,9 @@ pub(super) fn translate(
             if source.trim().is_empty() {
                 return Ok(source);
             }
-            let text = translated.next().ok_or("Не хватает фрагмента перевода")?;
+            let text = translated.next().ok_or("A translation fragment is missing")?;
             if text.trim().is_empty() || text.contains('\0') {
-                return Err("Провайдер вернул пустой или недопустимый фрагмент".into());
+                return Err("Provider returned an empty or invalid fragment".into());
             }
             Ok(text)
         })

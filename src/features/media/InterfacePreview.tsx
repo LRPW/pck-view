@@ -1,13 +1,18 @@
-import {EditorSwitch} from '../editor/EditorSwitch';
-import {flexLayout, type LayoutBox} from './flex-layout';
-import {uiTextStyle} from './ui-text-style';
-import {useGameFontFamily} from "./GameFonts";
-import {ResourceLoading} from "./ResourceLoading";
-import {GfxPreview} from "./GfxPreview";
-import {useResourceInvoke} from '../editor/resource-context';
-import {SubDialogCanvas} from "./SubDialogCanvas";
-import {TextureFrame, useInterfaceTextures} from './InterfaceTextures';
+import {t} from "../../i18n";
+import {Box, Button, Field, Select} from "@chakra-ui/react";
 import {type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState} from 'react';
+import {AccordionItem, AccordionItemContent, AccordionItemTrigger, AccordionRoot} from "../../components/ui/accordion";
+import {SelectContent, SelectItem, SelectRoot, SelectTrigger, SelectValueText} from "../../components/ui/select";
+import {EditorSwitch} from '../editor/EditorSwitch';
+import {useResourceInvoke} from '../editor/resource-context';
+import {selectCollection} from '../editor/select-collection';
+import {flexLayout, type LayoutBox} from './flex-layout';
+import {useGameFontFamily} from "./GameFonts";
+import {GfxPreview} from "./GfxPreview";
+import {TextureFrame, useInterfaceTextures} from './InterfaceTextures';
+import {ResourceLoading} from "./ResourceLoading";
+import {SubDialogCanvas} from "./SubDialogCanvas";
+import {uiTextStyle} from './ui-text-style';
 
 export function interfaceType(name: string) {
     return /\.xml$/i.test(name);
@@ -16,7 +21,7 @@ export function interfaceType(name: string) {
 export function InterfacePreview({
                                      text,
                                      entries,
-                                     selection,
+                                     selection, selections = [], onSelections,
                                      onSelect,
                                      onGeometry,
                                      onOpen,
@@ -28,20 +33,96 @@ export function InterfacePreview({
                                      hiddenElements = [],
                                      borders = false,
                                      borderOverrides = {},
+                                     capture,
                                      fileName = ''
                                  }: {
+    capture?: (report: { textures: number; missing: string[] }) => void;
     hiddenElements?: string[];
     gridAnchor?: [number, number];
-    borders?: boolean; borderOverrides?: Record<string, boolean>;
-    text: string; entries: { name: string }[]; selection?: number; onSelect?: (index: number) => void;
-    onGeometry?: (index: number, values: Record<string, number>) => void; grid?: number; disabled?: boolean;
+    borders?: boolean;
+    borderOverrides?: Record<string, boolean>;
+    text: string;
+    entries: { name: string }[];
+    selection?: number;
+    selections?: number[];
+    onSelections?: (indices: number[]) => void;
+    onSelect?: (index: number) => void;
+    onGeometry?: (index: number, values: Record<string, number>) => void;
+    grid?: number;
+    disabled?: boolean;
     onOpen?: (index: number) => void;
-    fileName?: string; initialZoom?: number; onZoom?: (zoom: number) => void;
+    fileName?: string;
+    initialZoom?: number;
+    onZoom?: (zoom: number) => void;
 }) {
     const invoke = useResourceInvoke();
     const fontFamily = useGameFontFamily();
     const [zoom, setZoom] = useState(initialZoom);
     const canvasRef = useRef<HTMLDivElement>(null);
+    const [marquee, setMarquee] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+    const marqueeCleanup = useRef<(() => void) | null>(null);
+    useEffect(() => () => marqueeCleanup.current?.(), []);
+
+    function startMarquee(event: ReactPointerEvent<HTMLDivElement>) {
+        if (capture || event.button !== 0 || (event.target as Element).closest('[data-geometry-index]')) return;
+        event.preventDefault();
+        const canvas = event.currentTarget;
+        const rect = canvas.getBoundingClientRect();
+        const start = {
+            x: event.clientX - rect.left + canvas.scrollLeft,
+            y: event.clientY - rect.top + canvas.scrollTop
+        };
+        const initial = event.ctrlKey || event.metaKey || event.shiftKey ? [...selections] : [];
+        if (!initial.length) {
+            onSelections?.([]);
+            onSelect?.(-1);
+            setSelected(null);
+        }
+        let moved = false;
+        const move = (e: PointerEvent) => {
+            const bounds = canvas.getBoundingClientRect();
+            const end = {x: e.clientX - bounds.left + canvas.scrollLeft, y: e.clientY - bounds.top + canvas.scrollTop};
+            if (!moved && Math.hypot(end.x - start.x, end.y - start.y) < 4) return;
+            moved = true;
+            const box = {
+                x: Math.min(start.x, end.x),
+                y: Math.min(start.y, end.y),
+                width: Math.abs(end.x - start.x),
+                height: Math.abs(end.y - start.y)
+            };
+            setMarquee(box);
+            const hits = Array.from(canvas.querySelectorAll<HTMLElement>('[data-geometry-index]')).filter(element => {
+                const r = element.getBoundingClientRect();
+                const left = r.left - bounds.left + canvas.scrollLeft, top = r.top - bounds.top + canvas.scrollTop;
+                return r.width > 0 && r.height > 0 && left < box.x + box.width && left + r.width > box.x && top < box.y + box.height && top + r.height > box.y;
+            }).map(element => Number(element.dataset.geometryIndex));
+            const next = [...new Set([...initial, ...hits])];
+            onSelections?.(next);
+            onSelect?.(next.at(-1) ?? -1);
+        };
+        const finish = () => {
+            cleanup();
+            setMarquee(null);
+        };
+        const cancel = () => {
+            cleanup();
+            setMarquee(null);
+            onSelections?.(initial);
+            onSelect?.(initial.at(-1) ?? -1);
+        };
+        const cleanup = () => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', finish);
+            window.removeEventListener('pointercancel', cancel);
+            marqueeCleanup.current = null;
+        };
+        marqueeCleanup.current?.();
+        marqueeCleanup.current = cleanup;
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', finish);
+        window.addEventListener('pointercancel', cancel);
+    }
+
     const zoomRef = useRef(zoom);
     const onZoomRef = useRef(onZoom);
     zoomRef.current = zoom;
@@ -94,7 +175,10 @@ export function InterfacePreview({
         const raw = value(e, name);
         return raw && Number.isFinite(Number(raw)) ? Math.max(-10000, Math.min(10000, Number(raw))) : fallback;
     };
-    const {textures, missing, progress, loading} = useInterfaceTextures(model, entries);
+    const {textures, missing, progress, loading, settled} = useInterfaceTextures(model, entries);
+    useEffect(() => {
+        if (capture && settled) capture({textures: Object.keys(textures).length, missing});
+    }, [capture, settled, textures, missing]);
     const nodes = model ? Array.from(model.ownerDocument.getElementsByTagName('*')) : [];
     const active = selection === undefined ? selected : nodes[selection];
 
@@ -109,6 +193,17 @@ export function InterfacePreview({
         event.preventDefault();
         event.stopPropagation();
         const index = nodes.indexOf(element);
+        if (event.ctrlKey || event.metaKey || event.shiftKey) {
+            const current = selections.length ? selections : selection === undefined ? [] : [selection];
+            const next = event.shiftKey && selection !== undefined ? nodes.map((node, i) => ({node, i})).filter(({
+                                                                                                                     node,
+                                                                                                                     i
+                                                                                                                 }) => i >= Math.min(selection, index) && i <= Math.max(selection, index) && node.hasAttribute('Name')).map(({i}) => i) : current.includes(index) ? current.filter(value => value !== index) : [...current, index];
+            onSelections?.(next);
+            onSelect?.(next.at(-1) ?? index);
+            return;
+        }
+        if (!selections.includes(index)) onSelections?.([index]);
         onSelect?.(index);
         const target = event.currentTarget;
         const box = (edge ? target.parentElement : target) as HTMLElement;
@@ -120,9 +215,14 @@ export function InterfacePreview({
             Height: box.offsetHeight
         };
         const initialStyle = box.getAttribute('style');
+        const group = !edge && selections.includes(index) ? selections.map(i => nodes[i]).filter(node => node && node !== element && !selections.some(j => nodes[j] !== node && nodes[j]?.contains(node))) : [];
+        const groupBoxes = group.map(node => ({
+            node,
+            box: canvasRef.current?.querySelector<HTMLElement>('[data-geometry-index="' + nodes.indexOf(node) + '"]')
+        })).filter(item => item.box).map(item => ({...item, style: item.box!.getAttribute('style')}));
         let result: Record<string, number> = {};
         const snap = (v: number) => Math.round(v / grid) * grid;
-        const siblings = Array.from(element.parentElement?.children ?? []).filter(other => other !== element && value(other, 'Name'));
+        const siblings = Array.from(element.parentElement?.children ?? []).filter(other => other !== element && !selections.includes(nodes.indexOf(other)) && value(other, 'Name'));
         const references = (axis: 'x' | 'y') => siblings.flatMap(other => {
             const start = number(other, axis, 0);
             const size = number(other, axis === 'x' ? 'Width' : 'Height', axis === 'x' ? 100 : 22);
@@ -170,6 +270,10 @@ export function InterfacePreview({
                 if (vertical.guide !== undefined) result.y = vertical.position;
                 setGuides({x: horizontal.guide, y: vertical.guide});
             }
+            if (!edge && result.x !== undefined && result.y !== undefined) for (const item of groupBoxes) {
+                item.box!.style.left = (number(item.node, 'x', 0) + result.x - original.x) + 'px';
+                item.box!.style.top = (number(item.node, 'y', 0) + result.y - original.y) + 'px';
+            }
             for (const [key, v] of Object.entries(result)) box.style.setProperty(({
                 x: 'left',
                 y: 'top',
@@ -183,6 +287,7 @@ export function InterfacePreview({
             target.removeEventListener('pointerup', finish);
             target.removeEventListener('pointercancel', finish);
             if (initialStyle !== null) box.setAttribute('style', initialStyle);
+            for (const item of groupBoxes) if (item.style !== null) item.box!.setAttribute('style', item.style);
             if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
             if (e.type !== 'pointercancel' && Object.keys(result).length) onGeometry(index, result);
         };
@@ -191,54 +296,77 @@ export function InterfacePreview({
         target.addEventListener('pointercancel', finish);
     }
 
-    if (!model) return <div role="status">Файл не содержит корректного XML-окна AUInterface (DIALOG).</div>;
+    if (!model) return <Box
+        role="status">{t("The file does not contain a valid AUInterface XML window (DIALOG).")}</Box>;
     const controls = [...layout.keys()].filter(e => {
         for (let p: Element | null = e; p && p !== model; p = p.parentElement) if (hiddenElements.includes(value(p, 'Name'))) return false;
         return true;
     });
     const width = Math.max(1, number(model, 'Width', 800));
     const height = Math.max(1, number(model, 'Height', 600));
-    return <div
+    return <Box
         style={{flex: 1, minWidth: 0, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column', gap: 12}}>
-        <div>Макет AUInterface · {value(model, 'Name')} · {width} × {height}
-            <label style={{marginLeft: 16}}>Масштаб <select value={zoom} onChange={e => {
-                setZoom(Number(e.target.value));
-                onZoom?.(Number(e.target.value));
-            }}>
-                {zoomSteps.map(z => <option key={z} value={z}>{z * 100}%</option>)}
-            </select></label>
-            <EditorSwitch label="Направляющие и привязка к элементам" showLabel checked={smartGuides}
-                          change={checked => {
-                              setSmartGuides(checked);
-                              setGuides({});
-                          }}/>
-        </div>
+        {!capture && <>
+            <Box display="flex" alignItems="center" flexWrap="wrap" gap="3" px="3" py="2" bg="bg.panel"
+                 borderBottomWidth="1px"
+                 fontSize="sm">{t("AUInterface layout · ")}{value(model, 'Name')} · {width} × {height}
+                <Field.Root width="auto" flexDirection="row" alignItems="center" gap="2" ml="auto"><Field.Label
+                    mb="0">{t("Zoom")}</Field.Label><SelectRoot size="sm" lazyMount unmountOnExit width="100px"
+                                                                minW="100px"
+                                                                collection={selectCollection(<>{zoomSteps.map(z =>
+                                                                    <option key={z}
+                                                                            value={z}>{z * 100}%</option>)}</>)}
+                                                                value={[String(zoom)]}
+                                                                onValueChange={async ({value: [value]}) => {
+                                                                    setZoom(Number(value));
+                                                                    onZoom?.(Number(value));
+                                                                }}><SelectTrigger><SelectValueText/></SelectTrigger><SelectContent><Select.Context>{select => select.collection.items.map(item =>
+                    <SelectItem key={select.collection.getItemValue(item)}
+                                item={item}>{t(select.collection.stringifyItem(item))}</SelectItem>)}</Select.Context></SelectContent></SelectRoot></Field.Root>
+                <EditorSwitch label={t("Guides and element snapping")} showLabel checked={smartGuides}
+                              change={checked => {
+                                  setSmartGuides(checked);
+                                  setGuides({});
+                              }}/>
+            </Box>
 
-        {loading && <ResourceLoading label="Загрузка текстур" completed={progress.completed} total={progress.total}
-                                     detail={progress.current}/>}
-        {missing.length > 0 && <details>
-            <summary>Не загружено текстур: {missing.length}</summary>
-            <div>{missing.map(path => <button key={path} style={{
-                display: "block",
-                textAlign: "left",
-                color: "#8ed8ff",
-                textDecoration: "underline"
-            }} onClick={() => {
-                void invoke("open_resource_window", {name: path}).catch(e => window.alert(String(e)));
-            }}>{path} ↗</button>)}</div>
-        </details>}
-        <div ref={canvasRef} title="Ctrl + колесо мыши — масштаб"
-             style={{overflow: 'auto', flex: 1, minWidth: 0, minHeight: 200, background: '#101720', padding: 16}}>
-            <div style={{
+            {loading &&
+                <ResourceLoading label={t("Loading textures")} completed={progress.completed} total={progress.total}
+                                 detail={progress.current}/>}
+            {missing.length > 0 && <AccordionRoot collapsible defaultValue={false ? ["content"] : []}><AccordionItem
+                value="content"><AccordionItemTrigger>{t("Textures not loaded: ")}{missing.length}</AccordionItemTrigger><AccordionItemContent><Box>{missing.map(path =>
+                <Button key={path} style={{
+                    display: "block",
+                    textAlign: "left",
+                    color: "var(--chakra-colors-cyan-300)",
+                    textDecoration: "underline"
+                }} onClick={() => {
+                    void invoke("open_resource_window", {name: path}).catch(e => window.alert(String(e)));
+                }}>{path} ↗</Button>)}</Box></AccordionItemContent></AccordionItem></AccordionRoot>}</>}
+        <Box ref={canvasRef} onPointerDown={startMarquee} title={t("Ctrl + mouse wheel — zoom")}
+             style={{
+                 position: 'relative',
+                 overflow: 'auto',
+                 flex: 1,
+                 minWidth: 0,
+                 minHeight: capture ? 0 : 200,
+                 background: 'var(--chakra-colors-preview-background)',
+                 padding: capture ? 0 : 16
+             }}>
+            {marquee &&
+                <Box pointerEvents="none" position="absolute" zIndex="10" borderWidth="1px" borderColor="blue.400"
+                     bg="blue.500/15"
+                     style={{left: marquee.x, top: marquee.y, width: marquee.width, height: marquee.height}}/>}
+            <Box data-preview-dialog style={{
                 position: 'relative',
                 width: width * zoom,
                 height: height * zoom,
-                outline: '2px solid #9bb5d6',
-                boxShadow: '0 0 0 3px #080e17, 0 6px 24px #0008',
+                outline: '2px solid var(--chakra-colors-preview-frame)',
+                boxShadow: '0 0 0 3px var(--chakra-colors-preview-shadow), 0 6px 24px var(--chakra-colors-black-alpha-500)',
                 overflow: 'hidden',
                 flexShrink: 0
             }}>
-                <div style={{
+                <Box style={{
                     position: 'absolute',
                     left: 0,
                     top: 0,
@@ -246,26 +374,28 @@ export function InterfacePreview({
                     height,
                     transform: `scale(${zoom})`,
                     transformOrigin: 'top left',
-                    backgroundColor: '#202936',
+                    backgroundColor: 'var(--chakra-colors-preview-checker-base)',
                     backgroundImage: [
                         ...(grid > 1 ? [
-                            'linear-gradient(to right, rgba(145, 165, 190, 0.22) 1px, transparent 1px)',
-                            'linear-gradient(to bottom, rgba(145, 165, 190, 0.22) 1px, transparent 1px)'
+                            'linear-gradient(to right, var(--chakra-colors-preview-grid) 1px, transparent 1px)',
+                            'linear-gradient(to bottom, var(--chakra-colors-preview-grid) 1px, transparent 1px)'
                         ] : []),
-                        'conic-gradient(#2a3545 25%, transparent 0 50%, #2a3545 0 75%, transparent 0)'
+                        'conic-gradient(var(--chakra-colors-preview-checker-square) 25%, transparent 0 50%, var(--chakra-colors-preview-checker-square) 0 75%, transparent 0)'
                     ].join(', '),
                     backgroundSize: [...(grid > 1 ? [`${grid}px ${grid}px`, `${grid}px ${grid}px`] : []), '32px 32px'].join(', ')
                 }}>
                     <TextureFrame element={model} textures={textures}/>
                     {controls.map((e, i) => {
                         const txt = Array.from(e.children).find(c => c.tagName.toUpperCase() === 'TEXT');
-                        return <button key={i}
+                        return <Button key={i}
                                        title={`${e.tagName}: ${value(e, 'Name')}${value(e, 'DialogFile') ? ' → ' + value(e, 'DialogFile') : ''}`}
                                        onDoubleClick={() => onOpen?.(nodes.indexOf(e))}
-                                       onPointerDown={ev => gesture(ev, e)} onClick={() => {
-                            setSelected(e);
-                            onSelect?.(nodes.indexOf(e));
-                        }} style={{
+                                       data-geometry-index={nodes.indexOf(e)} onPointerDown={ev => gesture(ev, e)}
+                                       onClick={event => {
+                                           if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+                                           setSelected(e);
+                                           onSelect?.(nodes.indexOf(e));
+                                       }} style={{
                             position: 'absolute',
                             left: number(e, 'x', 0),
                             top: number(e, 'y', 0),
@@ -281,10 +411,10 @@ export function InterfacePreview({
                             transform: !value(e, 'Width') && e.tagName.toUpperCase() === 'LABEL' ? `translateX(${number(e, 'Align', 0) === 1 ? '-50%' : number(e, 'Align', 0) === 2 ? '-100%' : '0'})` : undefined,
                             height: Math.max(0, number(e, 'Height', 22)),
                             border: 'none',
-                            outline: active === e ? '1px solid #ffce67' : (borderOverrides[value(e, 'Name') || String(nodes.indexOf(e))] ?? borders) ? '1px dashed #8192a8' : 'none',
+                            outline: (active === e || selections.includes(nodes.indexOf(e))) ? '1px solid var(--chakra-colors-fg-warning)' : (borderOverrides[value(e, 'Name') || String(nodes.indexOf(e))] ?? borders) ? '1px dashed var(--chakra-colors-preview-outline)' : 'none',
                             background: 'transparent',
                             touchAction: 'none',
-                            color: '#eef4ff',
+                            color: 'var(--chakra-colors-preview-text)',
                             overflow: 'visible',
                             fontSize: txt ? Math.max(8, Math.min(72, number(txt, 'FontSize', 12))) : 12,
                             padding: 0,
@@ -318,42 +448,48 @@ export function InterfacePreview({
                                 position: "absolute",
                                 width: 7,
                                 height: 7,
-                                background: "#ffce67",
-                                border: "1px solid #111",
+                                background: "var(--chakra-colors-fg-warning)",
+                                border: "1px solid var(--chakra-colors-preview-handle-border)",
                                 zIndex: 10,
                                 left: edge.includes("w") ? -4 : edge.includes("e") ? "calc(100% - 3px)" : "calc(50% - 3px)",
                                 top: edge.includes("n") ? -4 : edge.includes("s") ? "calc(100% - 3px)" : "calc(50% - 3px)",
                                 cursor: `${edge}-resize`,
                                 touchAction: "none"
-                            }}/>)}</button>;
+                            }}/>)}</Button>;
                     })}
-                    {guides.x !== undefined && <div aria-hidden="true" style={{
+                    {guides.x !== undefined && <Box aria-hidden="true" style={{
                         position: 'absolute',
                         left: guides.x,
                         top: 0,
                         height: '100%',
                         width: 0,
-                        borderLeft: `${1 / zoom}px solid ${guides.x === width / 2 ? '#ff4545' : '#f472d0'}`,
+                        borderLeft: t("{value0}px solid {value1}", {
+                            value0: 1 / zoom,
+                            value1: guides.x === width / 2 ? 'var(--chakra-colors-fg-error)' : 'var(--chakra-colors-pink-400)'
+                        }),
                         pointerEvents: 'none',
                         zIndex: 100
                     }}/>}
-                    {guides.y !== undefined && <div aria-hidden="true" style={{
+                    {guides.y !== undefined && <Box aria-hidden="true" style={{
                         position: 'absolute',
                         top: guides.y,
                         left: 0,
                         width: '100%',
                         height: 0,
-                        borderTop: `${1 / zoom}px solid ${guides.y === height / 2 ? '#ff4545' : '#f472d0'}`,
+                        borderTop: t("{value0}px solid {value1}", {
+                            value0: 1 / zoom,
+                            value1: guides.y === height / 2 ? 'var(--chakra-colors-fg-error)' : 'var(--chakra-colors-pink-400)'
+                        }),
                         pointerEvents: 'none',
                         zIndex: 100
                     }}/>}
-                </div>
-            </div>
-        </div>
+                </Box>
+            </Box>
+        </Box>
         {selected && controls.includes(selected) && <pre style={{
             maxHeight: 140,
             overflow: 'auto',
             margin: 0
         }}>{selected.tagName + '\n' + Array.from(selected.attributes).map(a => `${a.name}: ${a.value}`).join('\n')}</pre>}
-    </div>;
+    </Box>;
 }

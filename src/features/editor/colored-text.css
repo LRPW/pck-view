@@ -11,8 +11,8 @@
 .task-colored-field {
     position: relative;
     min-width: 0;
-    color: #e2e8f0;
-    background: #101b29;
+    color: var(--chakra-colors-fg);
+    background: var(--chakra-colors-bg);
     border-radius: 4px;
 }
 
@@ -31,15 +31,15 @@
     width: 100%;
     color: transparent;
     -webkit-text-fill-color: transparent;
-    caret-color: #e2e8f0;
+    caret-color: var(--chakra-colors-fg);
     background: transparent;
-    border: 1px solid #34465e;
+    border: 1px solid var(--chakra-colors-border);
     border-radius: 4px;
 }
 
 .task-colored-field > input::selection, .task-colored-field > textarea::selection {
     color: transparent;
-    background: rgb(75 184 165 / 35%);
+    background: color-mix(in srgb, var(--chakra-colors-teal-solid) 35%, transparent);
 }
 
 .task-color-mirror {
@@ -52,7 +52,7 @@
 }
 
 .task-color-placeholder {
-    color: #98afc3;
+    color: var(--chakra-colors-fg-muted);
 }
 
 .task-colored-field.multiline > textarea, .task-colored-field.multiline > .task-color-mirror {

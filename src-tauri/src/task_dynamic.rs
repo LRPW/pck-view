@@ -13,7 +13,7 @@ impl Reader<'_> {
             Kind::TalkLabel => {
                 let bytes = self.count()?;
                 if bytes % 2 != 0 || bytes > 128 {
-                    return Err("Некорректный текст диалога".into());
+                    return Err("Invalid dialogue text".into());
                 }
                 bytes / 2
             }
@@ -48,12 +48,12 @@ impl Reader<'_> {
     fn dyn_award(&mut self, fields: &mut Vec<Field>) -> Result<()> {
         let header = self.pos;
         let mask = self.count()?;
-        let section = "Награда за успех";
+        let section = "Success reward";
         for (bit, label, kind) in [
-            (0, "Монеты", Kind::UInt),
-            (1, "Опыт", Kind::UInt),
-            (2, "Дух", Kind::UInt),
-            (3, "Репутация", Kind::Int),
+            (0, "Coins", Kind::UInt),
+            (1, "Experience", Kind::UInt),
+            (2, "Spirit", Kind::UInt),
+            (3, "Reputation", Kind::Int),
         ] {
             if mask & (1 << bit) != 0 {
                 self.dyn_number(fields, 4, label, section, kind)?;
@@ -81,7 +81,7 @@ impl Reader<'_> {
 
     fn dyn_node(&mut self, depth: usize) -> Result<TaskNode> {
         if depth >= 64 {
-            return Err("Слишком глубокое дерево заданий".into());
+            return Err("Quest tree is too deep".into());
         }
         let mask = self.count()?;
         self.take(4)?;
@@ -92,82 +92,82 @@ impl Reader<'_> {
             None
         };
         let id = self.count()? as u32;
-        let name = self.dyn_text("Название", "Основное", Kind::Name)?;
+        let name = self.dyn_text("Name", "General", Kind::Name)?;
         let title = name.value.clone();
         let mut fields = vec![name];
         if let Some(offset) = special {
-            fields.push(self.number(offset, "Код специальной награды", "Основное", Kind::UInt));
+            fields.push(self.number(offset, "Special reward code", "General", Kind::UInt));
         }
         for label in [
-            "Выбрать одно подзадание",
-            "Случайное подзадание",
-            "Подзадания по порядку",
-            "Провал родителя при провале подзадания",
-            "Успех родителя при успехе подзадания",
-            "Можно отказаться",
-            "Повторяемое",
-            "Повтор после провала",
-            "Очистить при отказе",
-            "Записывать завершение",
-            "Провал при смерти",
-            "Автоматическая выдача",
-            "Срабатывает при смерти",
-            "Очистить полученные предметы",
-            "Требуется супруг",
-            "Групповое задание",
-            "Показывать направление",
+            "Choose one subquest",
+            "Random subquest",
+            "Sequential subquests",
+            "Fail parent when a subquest fails",
+            "Complete parent when a subquest succeeds",
+            "Can abandon",
+            "Repeatable",
+            "Repeat after failure",
+            "Clear on abandon",
+            "Record completion",
+            "Fail on death",
+            "Auto accept",
+            "Trigger on death",
+            "Clear granted items",
+            "Spouse required",
+            "Party quest",
+            "Show direction",
         ] {
-            self.dyn_number(&mut fields, 1, label, "Основное", Kind::Bool)?;
+            self.dyn_number(&mut fields, 1, label, "General", Kind::Bool)?;
         }
-        for label in ["Минимальный уровень", "Максимальный уровень"]
+        for label in ["Minimum level", "Maximum level"]
         {
-            self.dyn_number(&mut fields, 1, label, "Условия", Kind::Byte)?;
+            self.dyn_number(&mut fields, 1, label, "Conditions", Kind::Byte)?;
         }
         for bit in 0..13 {
             if mask & (1 << bit) == 0 {
                 continue;
             }
-            let section = "Условия";
+            let section = "Conditions";
             match bit {
                 0 => {
-                    self.dyn_number(&mut fields, 4, "Лимит времени (сек.)", section, Kind::UInt)?
+                    self.dyn_number(&mut fields, 4, "Time limit (seconds)", section, Kind::UInt)?
                 }
-                1 => self.dyn_number(&mut fields, 4, "Репутация", section, Kind::Int)?,
-                2 => self.dyn_number(&mut fields, 2, "Период", section, Kind::UShort)?,
+                1 => self.dyn_number(&mut fields, 4, "Reputation", section, Kind::Int)?,
+                2 => self.dyn_number(&mut fields, 2, "Period", section, Kind::UShort)?,
                 3 | 6 => {
                     let count = self.byte()?;
                     if bit == 6 {
                         self.take(2)?;
                     }
                     let label = if bit == 3 {
-                        "Требуемый предмет"
+                        "Required item"
                     } else {
-                        "Выдаваемый предмет"
+                        "Granted item"
                     };
                     for i in 0..count {
                         self.item(&mut fields, section, &format!("{label} {}", i + 1))?;
                     }
                 }
                 4 => {
-                    self.dyn_number(&mut fields, 1, "Выдача в зоне", section, Kind::Bool)?;
-                    self.dyn_number(&mut fields, 4, "Мир выдачи", section, Kind::UInt)?;
+                    self.dyn_number(&mut fields, 1, "Accept in area", section, Kind::Bool)?;
+                    self.dyn_number(&mut fields, 4, "Accept world", section, Kind::UInt)?;
                     let count = self.count()?;
                     self.skip(count, 24)?;
                 }
                 5 => {
-                    self.dyn_number(&mut fields, 1, "Телепортировать", section, Kind::Bool)?;
-                    self.dyn_number(&mut fields, 4, "Мир телепортации", section, Kind::UInt)?;
+                    self.dyn_number(&mut fields, 1, "Teleport", section, Kind::Bool)?;
+                    self.dyn_number(&mut fields, 4, "Teleport world", section, Kind::UInt)?;
                     for axis in ["X", "Y", "Z"] {
                         self.dyn_number(
                             &mut fields,
                             4,
-                            &format!("Телепортация · {axis}"),
+                            &format!("Teleport · {axis}"),
                             section,
                             Kind::Float,
                         )?;
                     }
                 }
-                7 => self.dyn_number(&mut fields, 4, "Залог", section, Kind::UInt)?,
+                7 => self.dyn_number(&mut fields, 4, "Deposit", section, Kind::UInt)?,
                 8 | 10 | 11 => {
                     let count = self.byte()?;
                     let label = match bit {
@@ -175,14 +175,14 @@ impl Reader<'_> {
                             self.dyn_number(
                                 &mut fields,
                                 1,
-                                "Минимум выполненных заданий",
+                                "Minimum completed quests",
                                 section,
                                 Kind::Byte,
                             )?;
-                            "Предыдущее задание (ID и флаг провала)"
+                            "Previous quest (ID and failure flag)"
                         }
-                        10 => "ID класса",
-                        _ => "Взаимоисключающее задание",
+                        10 => "Class ID",
+                        _ => "Mutually exclusive quest",
                     };
                     for i in 0..count {
                         self.dyn_number(
@@ -194,7 +194,7 @@ impl Reader<'_> {
                         )?;
                     }
                 }
-                9 => self.dyn_number(&mut fields, 1, "Пол", section, Kind::Byte)?,
+                9 => self.dyn_number(&mut fields, 1, "Gender", section, Kind::Byte)?,
                 12 => {
                     let count = self.byte()?;
                     self.skip(count, 49)?;
@@ -207,15 +207,15 @@ impl Reader<'_> {
                 for i in 0..self.byte()? {
                     let offset = self.take(30)?;
                     for (delta, label) in [
-                        (0, "ID монстра"),
-                        (4, "Количество"),
-                        (8, "ID выпадающего предмета"),
-                        (12, "Количество предметов"),
+                        (0, "Monster ID"),
+                        (4, "Quantity"),
+                        (8, "Drop item ID"),
+                        (12, "Item quantity"),
                     ] {
                         fields.push(self.number(
                             offset + delta,
-                            &format!("Монстр {} · {label}", i + 1),
-                            "Цели",
+                            &format!("Monster {} · {label}", i + 1),
+                            "Objectives",
                             Kind::UInt,
                         ));
                     }
@@ -223,35 +223,35 @@ impl Reader<'_> {
             }
             2 => {
                 for i in 0..self.byte()? {
-                    self.item(&mut fields, "Цели", &format!("Предмет {}", i + 1))?;
+                    self.item(&mut fields, "Objectives", &format!("Item {}", i + 1))?;
                 }
                 for (label, kind) in [
-                    ("Требуется монет", Kind::UInt),
-                    ("Вклад в гильдию", Kind::Int),
-                    ("Опыт гильдии", Kind::Int),
+                    ("Required coins", Kind::UInt),
+                    ("Faction contribution", Kind::Int),
+                    ("Faction experience", Kind::Int),
                 ] {
-                    self.dyn_number(&mut fields, 4, label, "Цели", kind)?;
+                    self.dyn_number(&mut fields, 4, label, "Objectives", kind)?;
                 }
             }
-            4 => self.dyn_number(&mut fields, 4, "Мир цели", "Цели", Kind::UInt)?,
+            4 => self.dyn_number(&mut fields, 4, "Target world", "Objectives", Kind::UInt)?,
             11 => {
-                self.dyn_number(&mut fields, 4, "Мир цели", "Цели", Kind::UInt)?;
+                self.dyn_number(&mut fields, 4, "Target world", "Objectives", Kind::UInt)?;
                 self.take(12)?;
             }
-            5 => self.dyn_number(&mut fields, 4, "Время ожидания (сек.)", "Цели", Kind::UInt)?,
+            5 => self.dyn_number(&mut fields, 4, "Wait time (seconds)", "Objectives", Kind::UInt)?,
             _ => {}
         }
-        self.dyn_number(&mut fields, 1, "Способ сдачи", "Цели", Kind::Byte)?;
+        self.dyn_number(&mut fields, 1, "Turn-in method", "Objectives", Kind::Byte)?;
         self.dyn_award(&mut fields)?;
-        for label in ["Описание", "Текст успеха", "Текст провала"] {
-            fields.push(self.dyn_text(label, "Тексты", Kind::Text)?);
+        for label in ["Description", "Success text", "Failure text"] {
+            fields.push(self.dyn_text(label, "Texts", Kind::Text)?);
         }
         for section in [
-            "Диалог выдачи",
-            "Диалог отказа",
-            "Диалог выдачи предметов",
-            "Диалог выполнения",
-            "Диалог награды",
+            "Accept dialogue",
+            "Abandon dialogue",
+            "Item grant dialogue",
+            "Completion dialogue",
+            "Reward dialogue",
         ] {
             fields.push(self.talk(0, section, true)?);
         }
@@ -276,7 +276,7 @@ pub(in super::super) fn dynamic_offsets(bytes: &[u8], count: usize) -> Result<Ve
         reader.dyn_node(0)?;
     }
     if reader.pos != bytes.len() {
-        return Err("Границы динамических заданий не совпали".into());
+        return Err("Dynamic quest boundaries do not match".into());
     }
     Ok(offsets)
 }
@@ -285,20 +285,20 @@ pub(in super::super) fn parse_dynamic(bytes: &[u8]) -> Result<TaskNode> {
     let mut reader = Reader { bytes, pos: 0 };
     let node = reader.dyn_node(0)?;
     if reader.pos != bytes.len() {
-        return Err("Граница динамического задания не совпала".into());
+        return Err("Dynamic quest boundary does not match".into());
     }
     Ok(node)
 }
 
 pub(in super::super) fn parse_npc(bytes: &[u8]) -> Result<TaskNode> {
     if bytes.len() != 12 {
-        return Err("Некорректная запись NPC".into());
+        return Err("Invalid NPC record".into());
     }
     let reader = Reader { bytes, pos: 0 };
     let id = reader.u32(0);
     let fields: Vec<_> = [(4, "X"), (6, "Y"), (8, "Z")]
         .into_iter()
-        .map(|(offset, axis)| reader.number(offset, axis, "Координаты", Kind::Short))
+        .map(|(offset, axis)| reader.number(offset, axis, "Coordinates", Kind::Short))
         .collect();
     let name = fields
         .iter()

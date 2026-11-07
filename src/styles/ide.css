@@ -2,50 +2,48 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
-    background: #0b1018;
-    color: #dae3ef;
+    background: var(--chakra-colors-bg);
+    color: var(--chakra-colors-fg);
     font: 13px system-ui
 }
 
 .ide-header {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 10px 14px;
-    border-bottom: 1px solid #253044
+    flex-shrink: 0;
+    gap: 2px;
+    height: 40px;
+    padding: 0 0 0 10px;
+    background: var(--chakra-colors-bg-panel);
+    border-bottom: 1px solid var(--chakra-colors-border);
+    user-select: none;
 }
 
-.ide-header strong {
-    color: #63e2c5;
-    font-size: 20px;
-    margin-right: auto
+.ide-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-right: 14px;
+    color: var(--chakra-colors-fg);
 }
 
-.forge-ide button {
-    cursor: pointer;
-    background: #182436;
-    border: 1px solid #2b3d55;
-    border-radius: 4px;
-    padding: 6px 10px;
-    color: inherit
+.ide-brand-mark {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 5px;
+    background: var(--chakra-colors-purple-solid);
+    color: var(--chakra-colors-white);
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: -.5px;
 }
 
-.forge-ide button:hover {
-    background: #263d53
-}
-
-.forge-ide button:disabled {
-    opacity: .45;
-    cursor: default
-}
-
-.forge-ide input, .forge-ide select {
-    background: #101b29;
-    color: inherit;
-    border: 1px solid #34465e;
-    border-radius: 4px;
-    padding: 7px;
-    min-width: 0
+.ide-header .ide-brand strong {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .1px;
 }
 
 .ide-main {
@@ -79,20 +77,20 @@
     overflow: auto;
     flex-shrink: 0;
     min-height: 39px;
-    background: #101924;
-    border-bottom: 1px solid #253044
+    background: var(--chakra-colors-bg);
+    border-bottom: 1px solid var(--chakra-colors-border)
 }
 
 .ide-tab {
     display: flex;
     align-items: center;
-    border-right: 1px solid #253044;
+    border-right: 1px solid var(--chakra-colors-border);
     flex-shrink: 0
 }
 
 .ide-tab.active {
-    background: #1b2a3a;
-    box-shadow: inset 0 2px #63e2c5
+    background: var(--chakra-colors-bg-panel);
+    box-shadow: inset 0 2px var(--chakra-colors-teal-fg)
 }
 
 .ide-tab button {
@@ -138,7 +136,7 @@
     gap: 8px;
     flex-wrap: wrap;
     padding: 8px;
-    border-bottom: 1px solid #253044
+    border-bottom: 1px solid var(--chakra-colors-border)
 }
 
 .ide-document-toolbar > span {
@@ -147,7 +145,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #98afc3
+    color: var(--chakra-colors-fg-muted)
 }
 
 .ide-document-body {
@@ -171,8 +169,8 @@
 .ide-status {
     min-height: 27px;
     padding: 5px 12px;
-    border-top: 1px solid #253044;
-    color: #96a9be;
+    border-top: 1px solid var(--chakra-colors-border);
+    color: var(--chakra-colors-fg-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis
@@ -180,8 +178,8 @@
 
 .ide-error {
     padding: 8px 12px;
-    background: #52282e;
-    color: #ffccd0;
+    background: var(--chakra-colors-red-subtle);
+    color: var(--chakra-colors-red-fg);
     white-space: pre-wrap
 }
 
@@ -197,7 +195,7 @@
 
 .ide-loading {
     padding: 6px;
-    color: #8ea7bd
+    color: var(--chakra-colors-fg-muted)
 }
 
 .ide-source {
@@ -243,7 +241,7 @@
 .ide-archive-selection {
     overflow: auto;
     flex: 1;
-    border: 1px solid #253044;
+    border: 1px solid var(--chakra-colors-border);
     padding: 10px
 }
 
@@ -299,11 +297,37 @@
 }
 
 .ide-archive-option > small {
-    color: #8ea7bd;
+    color: var(--chakra-colors-fg-muted);
     flex: none;
 }
 
 .ide-archive-option [data-part="label"] {
     margin-left: 0;
     color: inherit;
+}
+
+.forge-ide .ide-header .ide-menu-button {
+    height: 28px;
+    min-height: 28px;
+    min-width: 0;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--chakra-colors-fg);
+    font: 12px "Segoe UI", system-ui, sans-serif;
+    font-weight: 400;
+    box-shadow: none;
+    transition: background-color 80ms ease;
+}
+
+.forge-ide .ide-header .ide-menu-button:hover,
+.forge-ide .ide-header .ide-menu-button[data-state="open"] {
+    background: var(--chakra-colors-bg-emphasized);
+    color: var(--chakra-colors-fg);
+}
+
+.forge-ide .ide-header .ide-menu-button:focus-visible {
+    outline: 1px solid var(--chakra-colors-blue-fg);
+    outline-offset: -1px;
 }

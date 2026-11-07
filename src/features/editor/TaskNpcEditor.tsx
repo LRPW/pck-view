@@ -1,11 +1,14 @@
-import {useEffect, useMemo, useState} from 'react';
+import {matchesShortcut} from '../../app/shortcuts';
+import {message, t} from "../../i18n";
+import {Alert, Box, Button, Field, Input} from "@chakra-ui/react";
 import {invoke} from '@tauri-apps/api/core';
-import {ColumnDivider, resizeWidth} from './ColumnDivider';
-import {RecordLink} from './RecordLink';
-import {useColumnWidth} from './useColumnWidth';
-import './tasks.css';
-import {EditorProgress, EditorSkeleton} from './EditorLoading';
+import {useEffect, useMemo, useState} from 'react';
 import {notifications} from '../../app/notifications';
+import {ColumnDivider, resizeWidth} from './ColumnDivider';
+import {EditorProgress, EditorSkeleton} from './EditorLoading';
+import {RecordLink} from './RecordLink';
+import './tasks.css';
+import {useColumnWidth} from './useColumnWidth';
 
 type NpcRow = { id: number; name: string; coordinates: [number, number, number] };
 type NpcPack = { revision: string; rows: NpcRow[]; names_error?: string };
@@ -90,7 +93,7 @@ export function TaskNpcEditor({id, index, active, onDirty, onSaved, openNpc}: {
             setEdits({});
             onSaved();
         } catch (reason) {
-            notifications.create({type: 'error', title: 'Не удалось сохранить NPC', description: String(reason)});
+            notifications.create({type: 'error', title: t("Failed to save NPCs"), description: String(reason)});
         } finally {
             setBusy(false);
         }
@@ -99,7 +102,7 @@ export function TaskNpcEditor({id, index, active, onDirty, onSaved, openNpc}: {
     useEffect(() => {
         if (!active) return;
         const key = (event: KeyboardEvent) => {
-            if ((event.ctrlKey || event.metaKey) && event.code === 'KeyS') {
+            if (matchesShortcut(event, 'save')) {
                 event.preventDefault();
                 void save();
             }
@@ -110,50 +113,57 @@ export function TaskNpcEditor({id, index, active, onDirty, onSaved, openNpc}: {
 
     return <section className="tasks-editor task-npc-editor">
         <header>
-            <button disabled={busy || !changed} onClick={() => void save()}>Сохранить{changed ? ' *' : ''}</button>
-            <input aria-label="Поиск NPC" placeholder="ID или имя NPC…" value={query}
-                   onChange={event => {
-                       setQuery(event.target.value);
-                       setPage(0);
-                   }}/>
-            {busy && <EditorProgress label="Обработка task_npc.data"/>}
+            <Button disabled={busy || !changed} onClick={() => void save()}>{t("Save")}{changed ? ' *' : ''}</Button>
+            <Field.Root width="auto"><Input aria-label={t("Find NPC")} placeholder={t("NPC ID or name…")} value={query}
+                                            onChange={event => {
+                                                setQuery(event.target.value);
+                                                setPage(0);
+                                            }}/></Field.Root>
+            {busy && <EditorProgress label={t("Processing task_npc.data")}/>}
         </header>
-        {error && <div className="ide-error" role="alert">{error}</div>}
-        {pack?.names_error && <div className="task-npc-warning">Имена NPC недоступны · {pack.names_error}</div>}
-        <div className="task-npc-table">
+        {error && <Alert.Root status="error" size="sm"
+                              role="alert"><Alert.Indicator/><Alert.Content>{message(error)}</Alert.Content></Alert.Root>}
+        {pack?.names_error && <Box className="task-npc-warning">{t("NPC names unavailable · ")}{pack.names_error}</Box>}
+        <Box className="task-npc-table">
             {!pack && busy && <EditorSkeleton/>}
             <table style={{width: columns.reduce((width, [column]) => width + column, 0)}}>
                 <colgroup>{columns.map(([width], i) => <col key={i} style={{width}}/>)}</colgroup>
                 <thead>
-                <tr>{['ID', 'Имя NPC', ...axes].map((label, i) => <th scope="col" key={label}>
+                <tr>{['ID', t("NPC name"), ...axes].map((label, i) => <th scope="col" key={label}>
                     {label}
-                    <ColumnDivider label={`Ширина колонки ${label}`} onDelta={delta =>
+                    <ColumnDivider label={t("Column width: {value0}", {value0: label})} onDelta={delta =>
                         columns[i][1](width => resizeWidth(width, delta, i === 0 ? 84 : 56, 640))}/>
                 </th>)}</tr>
                 </thead>
                 <tbody>{filtered.slice(page * pageSize, (page + 1) * pageSize).map(({npc, row}) =>
                     <tr key={row} className={edits[row] ? 'modified' : undefined}>
                         <td>
-                            <div className="task-record-actions">
-                                <RecordLink value={String(npc.id)} label={`NPC ${npc.id}`} busy={busy} open={openNpc}
+                            <Box className="task-record-actions">
+                                <RecordLink value={String(npc.id)} label={t("NPC {value0}", {value0: npc.id})}
+                                            busy={busy} open={openNpc}
                                             npc/>
                                 <code>{npc.id}</code>
-                            </div>
+                            </Box>
                         </td>
                         <td className="task-npc-name" title={npc.name}>{npc.name || '—'}</td>
                         {axes.map((axis, i) => <td key={axis}>
-                            <input inputMode="numeric" aria-label={`${axis} · NPC ${npc.id}`} disabled={busy}
-                                   value={edits[row]?.[4 + i * 2] ?? npc.coordinates[i]}
-                                   onChange={event => edit(row, i, event.target.value)}/>
+                            <Field.Root width="auto"><Input inputMode="numeric"
+                                                            aria-label={t("{value0} · NPC {value1}", {
+                                                                value0: axis,
+                                                                value1: npc.id
+                                                            })}
+                                                            disabled={busy}
+                                                            value={edits[row]?.[4 + i * 2] ?? npc.coordinates[i]}
+                                                            onChange={event => edit(row, i, event.target.value)}/></Field.Root>
                         </td>)}
                     </tr>)}</tbody>
             </table>
-        </div>
+        </Box>
         <footer className="task-npc-pages">
-            <button aria-label="Предыдущая страница" disabled={page === 0} onClick={() => setPage(page - 1)}>←</button>
+            <Button aria-label={t("Previous page")} disabled={page === 0} onClick={() => setPage(page - 1)}>←</Button>
             <span>{page + 1} / {pages} · {filtered.length.toLocaleString()}</span>
-            <button aria-label="Следующая страница" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>→
-            </button>
+            <Button aria-label={t("Next page")} disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>→
+            </Button>
         </footer>
     </section>;
 }

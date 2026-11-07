@@ -5,6 +5,12 @@ use std::{collections::HashMap, sync::OnceLock};
 mod blocks;
 #[path = "task_dynamic.rs"]
 mod dynamic;
+#[path = "task_v93.rs"]
+mod v93;
+#[path = "task_versioned.rs"]
+mod versioned;
+#[cfg(test)]
+pub(super) use versioned::synthetic_fixed_size;
 const GROUP_KEY: usize = 1 << 31;
 pub(super) use dynamic::{dynamic_offsets, parse_dynamic, parse_npc};
 
@@ -62,7 +68,7 @@ pub(super) struct Field {
 
 impl Field {
     pub(super) fn patch(&self, value: &str) -> Result<Vec<u8>> {
-        let error = || format!("Некорректное значение поля «{}»", self.label);
+        let error = || format!("Invalid field value “{}”", self.label);
         Ok(match self.kind {
             Kind::UInt => value
                 .trim()
@@ -118,7 +124,7 @@ impl Field {
                         let capacity = (self.end - self.key) / 2;
                         if units.len() >= capacity {
                             return Err(format!(
-                                "{} · максимум {} символов UTF-16",
+                                "{} · maximum {} UTF-16 code units",
                                 self.label,
                                 capacity - 1
                             ));
@@ -201,14 +207,14 @@ impl Reader<'_> {
         self.pos = start
             .checked_add(length)
             .filter(|&end| end <= self.bytes.len())
-            .ok_or("Повреждён блок задания")?;
+            .ok_or("Corrupted quest block")?;
         Ok(start)
     }
     fn skip(&mut self, count: usize, stride: usize) -> Result<()> {
         self.take(
             count
                 .checked_mul(stride)
-                .ok_or("Переполнение размера задания")?,
+                .ok_or("Quest size overflow")?,
         )?;
         Ok(())
     }
@@ -286,11 +292,11 @@ impl Reader<'_> {
     fn item(&mut self, fields: &mut Vec<Field>, section: &str, label: &str) -> Result<()> {
         let offset = self.take(17)?;
         for (delta, name, kind) in [
-            (0, "ID предмета", Kind::UInt),
-            (4, "Обычный предмет", Kind::Bool),
-            (5, "Количество", Kind::UInt),
-            (9, "Вероятность", Kind::Float),
-            (13, "Срок", Kind::Int),
+            (0, "Item ID", Kind::UInt),
+            (4, "Common item", Kind::Bool),
+            (5, "Quantity", Kind::UInt),
+            (9, "Probability", Kind::Float),
+            (13, "Duration", Kind::Int),
         ] {
             fields.push(self.number(offset + delta, &format!("{label} · {name}"), section, kind));
         }
@@ -301,16 +307,16 @@ impl Reader<'_> {
         let start = self.take(block.size)?;
         let get = |name: &str| start + block.fields[name];
         for (name, label, kind) in [
-            ("m_ulGoldNum", "Монеты", Kind::UInt),
-            ("m_ulExp", "Опыт", Kind::UInt),
-            ("m_ulRealmExp", "Опыт неба", Kind::UInt),
-            ("m_ulSP", "Дух", Kind::UInt),
-            ("m_lReputation", "Репутация", Kind::Int),
-            ("m_ulNewTask", "ID нового задания", Kind::UInt),
-            ("m_iFactionContrib", "Вклад в гильдию", Kind::Int),
-            ("m_iForceReputation", "Репутация фракции", Kind::Int),
-            ("m_iWorldContribution", "Вклад в мир", Kind::Int),
-            ("m_ulDividend", "Дивиденды", Kind::UInt),
+            ("m_ulGoldNum", "Coins", Kind::UInt),
+            ("m_ulExp", "Experience", Kind::UInt),
+            ("m_ulRealmExp", "Sky experience", Kind::UInt),
+            ("m_ulSP", "Spirit", Kind::UInt),
+            ("m_lReputation", "Reputation", Kind::Int),
+            ("m_ulNewTask", "New quest ID", Kind::UInt),
+            ("m_iFactionContrib", "Faction contribution", Kind::Int),
+            ("m_iForceReputation", "Force reputation", Kind::Int),
+            ("m_iWorldContribution", "World contribution", Kind::Int),
+            ("m_ulDividend", "Dividends", Kind::UInt),
         ] {
             fields.push(self.number(get(name), label, section, kind));
         }
@@ -343,138 +349,144 @@ impl Reader<'_> {
         Ok(())
     }
 
-    fn node(&mut self, depth: usize) -> Result<TaskNode> {
+    fn node(&mut self, depth: usize, version: u32) -> Result<TaskNode> {
         if depth >= 64 {
-            return Err("Слишком глубокое дерево заданий".into());
+            return Err("Quest tree is too deep".into());
+        }
+        if version == 93 {
+            return self.node_v93(depth);
+        }
+        if version != 125 {
+            return self.node_versioned(depth, version);
         }
         let block = &layout().fixed;
         let start = self.take(block.size)?;
         let get = |name: &str| start + block.fields[name];
         let id = self.u32(start);
         let code = id as u16;
-        let name = self.fixed_text(start + 4, NAME_UNITS, code, "Название", "Основное");
+        let name = self.fixed_text(start + 4, NAME_UNITS, code, "Name", "General");
         let title = name.value.clone();
         let mut fields = vec![name];
         for (name, label, section, kind) in [
-            ("m_ulType", "Тип задания", "Основное", Kind::UInt),
+            ("m_ulType", "Quest type", "General", Kind::UInt),
             (
                 "m_ulTimeLimit",
-                "Лимит времени (сек.)",
-                "Основное",
+                "Time limit (seconds)",
+                "General",
                 Kind::UInt,
             ),
-            ("m_bCanGiveUp", "Можно отказаться", "Основное", Kind::Bool),
-            ("m_bCanRedo", "Повторяемое", "Основное", Kind::Bool),
+            ("m_bCanGiveUp", "Can abandon", "General", Kind::Bool),
+            ("m_bCanRedo", "Repeatable", "General", Kind::Bool),
             (
                 "m_bCanRedoAfterFailure",
-                "Повтор после провала",
-                "Основное",
+                "Repeat after failure",
+                "General",
                 Kind::Bool,
             ),
             (
                 "m_bOfflineFail",
-                "Провал при выходе",
-                "Основное",
+                "Fail on exit",
+                "General",
                 Kind::Bool,
             ),
             (
                 "m_bFailAsPlayerDie",
-                "Провал при смерти",
-                "Основное",
+                "Fail on death",
+                "General",
                 Kind::Bool,
             ),
-            ("m_bHidden", "Скрытое", "Основное", Kind::Bool),
-            ("m_bKeyTask", "Важное", "Основное", Kind::Bool),
-            ("m_bCanSeekOut", "Доступно в поиске", "Основное", Kind::Bool),
+            ("m_bHidden", "Hidden", "General", Kind::Bool),
+            ("m_bKeyTask", "Important", "General", Kind::Bool),
+            ("m_bCanSeekOut", "Available in search", "General", Kind::Bool),
             (
                 "m_bShowDirection",
-                "Показывать направление",
-                "Основное",
+                "Show direction",
+                "General",
                 Kind::Bool,
             ),
             (
                 "m_bExeChildInOrder",
-                "Подзадания по порядку",
-                "Основное",
+                "Sequential subquests",
+                "General",
                 Kind::Bool,
             ),
-            ("m_ulDelvNPC", "ID NPC выдачи", "Условия", Kind::UInt),
-            ("m_ulAwardNPC", "ID NPC награды", "Условия", Kind::UInt),
+            ("m_ulDelvNPC", "Quest giver NPC ID", "Conditions", Kind::UInt),
+            ("m_ulAwardNPC", "Reward NPC ID", "Conditions", Kind::UInt),
             (
                 "m_ulPremise_Lev_Min",
-                "Минимальный уровень",
-                "Условия",
+                "Minimum level",
+                "Conditions",
                 Kind::UInt,
             ),
             (
                 "m_ulPremise_Lev_Max",
-                "Максимальный уровень",
-                "Условия",
+                "Maximum level",
+                "Conditions",
                 Kind::UInt,
             ),
             (
                 "m_ulSuitableLevel",
-                "Рекомендуемый уровень",
-                "Условия",
+                "Recommended level",
+                "Conditions",
                 Kind::UInt,
             ),
-            ("m_ulPremise_Deposit", "Залог", "Условия", Kind::UInt),
+            ("m_ulPremise_Deposit", "Deposit", "Conditions", Kind::UInt),
             (
                 "m_lPremise_Reputation",
-                "Минимальная репутация",
-                "Условия",
+                "Minimum reputation",
+                "Conditions",
                 Kind::Int,
             ),
             (
                 "m_lPremise_RepuMax",
-                "Максимальная репутация",
-                "Условия",
+                "Maximum reputation",
+                "Conditions",
                 Kind::Int,
             ),
-            ("m_ulGender", "Пол", "Условия", Kind::UInt),
-            ("m_bRcvByTeam", "Выдача в группе", "Условия", Kind::Bool),
+            ("m_ulGender", "Gender", "Conditions", Kind::UInt),
+            ("m_bRcvByTeam", "Shared quest", "Conditions", Kind::Bool),
             (
                 "m_bAutoDeliver",
-                "Автоматическая выдача",
-                "Условия",
+                "Auto accept",
+                "Conditions",
                 Kind::Bool,
             ),
-            ("m_enumMethod", "Способ выполнения", "Цели", Kind::UInt),
-            ("m_enumFinishType", "Способ сдачи", "Цели", Kind::UInt),
-            ("m_ulGoldWanted", "Требуется монет", "Цели", Kind::UInt),
-            ("m_ulWaitTime", "Время ожидания (сек.)", "Цели", Kind::UInt),
-            ("m_ulReachLevel", "Достичь уровня", "Цели", Kind::UInt),
+            ("m_enumMethod", "Completion method", "Objectives", Kind::UInt),
+            ("m_enumFinishType", "Turn-in method", "Objectives", Kind::UInt),
+            ("m_ulGoldWanted", "Required coins", "Objectives", Kind::UInt),
+            ("m_ulWaitTime", "Wait time (seconds)", "Objectives", Kind::UInt),
+            ("m_ulReachLevel", "Reach a level", "Objectives", Kind::UInt),
             (
                 "m_ulReachReincarnationCount",
-                "Требуется перерождений",
-                "Цели",
+                "Required reincarnations",
+                "Objectives",
                 Kind::UInt,
             ),
             (
                 "m_ulReachRealmLevel",
-                "Достичь уровня неба",
-                "Цели",
+                "Reach sky level",
+                "Objectives",
                 Kind::UInt,
             ),
             (
                 "m_ulPremReincarnationMin",
-                "Минимум перерождений",
-                "Условия",
+                "Minimum reincarnations",
+                "Conditions",
                 Kind::UInt,
             ),
             (
                 "m_ulPremReincarnationMax",
-                "Максимум перерождений",
-                "Условия",
+                "Maximum reincarnations",
+                "Conditions",
                 Kind::UInt,
             ),
-            ("m_iVIPLevelMin", "Минимальный VIP", "Условия", Kind::Int),
-            ("m_iVIPLevelMax", "Максимальный VIP", "Условия", Kind::Int),
-            ("m_ulNPCToProtect", "ID охраняемого NPC", "Цели", Kind::UInt),
+            ("m_iVIPLevelMin", "Minimum VIP", "Conditions", Kind::Int),
+            ("m_iVIPLevelMax", "Maximum VIP", "Conditions", Kind::Int),
+            ("m_ulNPCToProtect", "Protected NPC ID", "Objectives", Kind::UInt),
             (
                 "m_ulProtectTimeLen",
-                "Время охраны (сек.)",
-                "Цели",
+                "Protection time (seconds)",
+                "Objectives",
                 Kind::UInt,
             ),
         ] {
@@ -485,29 +497,29 @@ impl Reader<'_> {
                 "m_ulPremise_Task_Count",
                 "m_ulPremise_Tasks",
                 20,
-                "Предыдущее задание (ID и флаг провала)",
+                "Previous quest (ID and failure flag)",
             ),
             (
                 "m_ulMutexTaskCount",
                 "m_ulMutexTasks",
                 5,
-                "Взаимоисключающее задание",
+                "Mutually exclusive quest",
             ),
-            ("m_ulOccupations", "m_Occupations", 12, "ID класса"),
+            ("m_ulOccupations", "m_Occupations", 12, "Class ID"),
         ] {
             let count = self.u32(get(count_key)).min(max);
             for i in 0..count {
                 fields.push(self.number(
                     get(data_key) + i as usize * 4,
                     &format!("{label} {}", i + 1),
-                    "Условия",
+                    "Conditions",
                     Kind::UInt,
                 ));
             }
         }
         if self.bytes[get("m_bHasSign")] != 0 {
             let offset = self.take(NAME_UNITS * 2)?;
-            fields.push(self.fixed_text(offset, NAME_UNITS, code, "Подпись", "Тексты"));
+            fields.push(self.fixed_text(offset, NAME_UNITS, code, "Label", "Texts"));
         }
         for (name, stride) in [
             ("m_ulTimetable", 48),
@@ -521,11 +533,11 @@ impl Reader<'_> {
             self.skip(self.u32(get(name)) as usize, stride)?;
         }
         for (key, label) in [
-            ("m_ulPremItems", "Требуемый предмет"),
-            ("m_ulGivenItems", "Выдаваемый предмет"),
+            ("m_ulPremItems", "Required item"),
+            ("m_ulGivenItems", "Granted item"),
         ] {
             for index in 0..self.u32(get(key)) {
-                self.item(&mut fields, "Условия", &format!("{label} {}", index + 1))?;
+                self.item(&mut fields, "Conditions", &format!("{label} {}", index + 1))?;
             }
         }
         if self.bytes[get("m_bTeamwork")] != 0 {
@@ -535,28 +547,28 @@ impl Reader<'_> {
         for index in 0..self.u32(get("m_ulMonsterWanted")) {
             let offset = self.take(30)?;
             for (delta, label) in [
-                (0, "ID монстра"),
-                (4, "Количество"),
-                (8, "ID выпадающего предмета"),
-                (12, "Количество предметов"),
+                (0, "Monster ID"),
+                (4, "Quantity"),
+                (8, "Drop item ID"),
+                (12, "Item quantity"),
             ] {
                 fields.push(self.number(
                     offset + delta,
-                    &format!("Монстр {} · {label}", index + 1),
-                    "Цели",
+                    &format!("Monster {} · {label}", index + 1),
+                    "Objectives",
                     Kind::UInt,
                 ));
             }
             fields.push(self.number(
                 offset + 17,
-                &format!("Монстр {} · шанс выпадения", index + 1),
-                "Цели",
+                &format!("Monster {} · drop chance", index + 1),
+                "Objectives",
                 Kind::Float,
             ));
         }
         self.skip(self.u32(get("m_ulPlayerWanted")) as usize, 37)?;
         for index in 0..self.u32(get("m_ulItemsWanted")) {
-            self.item(&mut fields, "Цели", &format!("Предмет {}", index + 1))?;
+            self.item(&mut fields, "Objectives", &format!("Item {}", index + 1))?;
         }
         for (name, stride) in [
             ("m_ulExpCnt", 576),
@@ -566,40 +578,52 @@ impl Reader<'_> {
         ] {
             self.skip(self.u32(get(name)) as usize, stride)?;
         }
-        self.award(&mut fields, "Награда за успех")?;
-        self.award(&mut fields, "Награда за провал")?;
+        self.award(&mut fields, "Success reward")?;
+        self.award(&mut fields, "Failure reward")?;
         for (label, size) in [
-            ("По времени · успех", 20),
-            ("По времени · провал", 20),
-            ("По предметам · успех", 24),
-            ("По предметам · провал", 24),
+            ("By time · success", 20),
+            ("By time · failure", 20),
+            ("By items · success", 24),
+            ("By items · failure", 24),
         ] {
             let count = self.count()?;
             if count > 5 {
-                return Err("Неверное число ступеней наград".into());
+                return Err("Invalid reward tier count".into());
             }
             self.take(size)?;
             for i in 0..count {
                 self.award(&mut fields, &format!("{label} · {}", i + 1))?;
             }
         }
-        for label in ["Описание", "Текст успеха", "Текст провала", "Посвящение"]
+        self.node_tail(id, title, fields, depth, version)
+    }
+
+    fn node_tail(
+        &mut self,
+        id: u32,
+        title: String,
+        mut fields: Vec<Field>,
+        depth: usize,
+        version: u32,
+    ) -> Result<TaskNode> {
+        let code = id as u16;
+        for label in ["Description", "Success text", "Failure text", "Tribute"]
         {
-            fields.push(self.text_field(code, label, "Тексты", Kind::Text)?);
+            fields.push(self.text_field(code, label, "Texts", Kind::Text)?);
         }
         for section in [
-            "Диалог выдачи",
-            "Диалог отказа",
-            "Диалог выдачи предметов",
-            "Диалог выполнения",
-            "Диалог награды",
+            "Accept dialogue",
+            "Abandon dialogue",
+            "Item grant dialogue",
+            "Completion dialogue",
+            "Reward dialogue",
         ] {
             fields.push(self.talk(code, section, false)?);
         }
         let count = self.count()?;
         let mut children = Vec::new();
         for _ in 0..count {
-            children.push(self.node(depth + 1)?);
+            children.push(self.node(depth + 1, version)?);
         }
         Ok(TaskNode {
             id,
@@ -610,11 +634,11 @@ impl Reader<'_> {
     }
 }
 
-pub(super) fn parse(bytes: &[u8]) -> Result<TaskNode> {
+pub(super) fn parse(bytes: &[u8], version: u32) -> Result<TaskNode> {
     let mut reader = Reader { bytes, pos: 0 };
-    let task = reader.node(0)?;
+    let task = reader.node(0, version)?;
     if reader.pos != bytes.len() {
-        return Err("Граница записи задания не совпала с индексом".into());
+        return Err("Quest record boundary does not match its index".into());
     }
     Ok(task)
 }
@@ -661,7 +685,7 @@ pub(in super::super) fn export_npc_talks(
     for index in 0..reader.count()? {
         let id = bytes
             .get(reader.pos..reader.pos + 4)
-            .ok_or("Диалог NPC обрезан")?;
+            .ok_or("Truncated NPC dialogue")?;
         let id = u32::from_le_bytes(id.try_into().unwrap());
         let field = reader.talk(0, "", false)?;
         blocks::export_talk(&field.value, &format!("/npcTalks/{index}/{id}"), emit)?;
@@ -671,17 +695,17 @@ pub(in super::super) fn export_npc_talks(
 
 fn field_text_path(path: &str, index: usize, field: &Field) -> String {
     let key = match field.label.as_str() {
-        "Название" => "name",
-        "Описание" => "description",
-        "Текст успеха" => "successText",
-        "Текст провала" => "failureText",
-        "Посвящение" => "tribute",
-        "Подпись" => "signature",
-        "Диалог выдачи" => "deliveryDialogue",
-        "Диалог отказа" => "refusalDialogue",
-        "Диалог выдачи предметов" => "itemDialogue",
-        "Диалог выполнения" => "executionDialogue",
-        "Диалог награды" => "awardDialogue",
+        "Name" => "name",
+        "Description" => "description",
+        "Success text" => "successText",
+        "Failure text" => "failureText",
+        "Tribute" => "tribute",
+        "Label" => "signature",
+        "Accept dialogue" => "deliveryDialogue",
+        "Abandon dialogue" => "refusalDialogue",
+        "Item grant dialogue" => "itemDialogue",
+        "Completion dialogue" => "executionDialogue",
+        "Reward dialogue" => "awardDialogue",
         _ => "text",
     };
     format!("{path}/fields/{index}/{key}")

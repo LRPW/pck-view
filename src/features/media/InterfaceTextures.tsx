@@ -1,6 +1,6 @@
 import {type CSSProperties, useEffect, useState} from 'react';
-import {useResourceInvoke} from '../editor/resource-context';
 import {decodeDds, decodeTga} from '../../lib/textures/texture-decode';
+import {useResourceInvoke} from '../editor/resource-context';
 
 export const attr = (e: Element, name: string) => Array.from(e.attributes).find(a => a.name.toLowerCase() === name.toLowerCase())?.value ?? '';
 const normalize = (s: string) => s.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
@@ -9,11 +9,13 @@ export type UiTexture = { url: string; width: number; height: number };
 export function useInterfaceTextures(model: Element | null, entries: { name: string }[]) {
     const invoke = useResourceInvoke();
     const [textures, setTextures] = useState<Record<string, UiTexture>>({});
+    const [settled, setSettled] = useState(false);
     const [missing, setMissing] = useState<string[]>([]);
     const [progress, setProgress] = useState({completed: 0, total: 0, current: ''});
     useEffect(() => {
         let disposed = false;
         const urls: string[] = [];
+        setSettled(false);
         setTextures({});
         setMissing([]);
         const index = new Map(entries.map((e, i) => [normalize(e.name), i]));
@@ -69,13 +71,14 @@ export function useInterfaceTextures(model: Element | null, entries: { name: str
                     if (!disposed) setProgress(old => ({...old, completed: old.completed + 1}));
                 }
             }
+            if (!disposed) setSettled(true);
         })();
         return () => {
             disposed = true;
             urls.forEach(URL.revokeObjectURL);
         };
     }, [model, entries]);
-    return {textures, missing, progress, loading: progress.completed < progress.total};
+    return {textures, missing, progress, settled, loading: progress.completed < progress.total};
 }
 
 export function TextureFrame({element, textures}: { element: Element; textures: Record<string, UiTexture> }) {

@@ -16,11 +16,11 @@ pub fn ide_translation_key_store(
 
 fn target(provider: &str, endpoint: &str) -> Result<String> {
     if !matches!(provider, "deepl" | "yandex" | "ollama" | "compatible") {
-        return Err("Неизвестный провайдер перевода".into());
+        return Err("Unknown translation provider".into());
     }
     let url = super::translation::provider_url(provider, endpoint)?;
     if url.len() > 2048 || url.chars().any(char::is_control) {
-        return Err("Некорректный адрес сервера перевода".into());
+        return Err("Invalid translation server URL".into());
     }
     // Credential Manager compares target names case-insensitively. URL paths can differ by case.
     let encoded: String = url.bytes().map(|byte| format!("{byte:02x}")).collect();
@@ -72,7 +72,7 @@ mod platform {
                 return if error.raw_os_error() == Some(NOT_FOUND) {
                     Ok(None)
                 } else {
-                    Err(format!("Диспетчер учётных данных Windows: {error}"))
+                    Err(format!("Windows Credential Manager: {error}"))
                 };
             }
             let credential = &*value;
@@ -80,11 +80,11 @@ mod platform {
             let result = if size == 0 {
                 Ok(None)
             } else if size > MAX_BLOB || credential.blob.is_null() {
-                Err("Некорректная запись ключа API".into())
+                Err("Invalid API key record".into())
             } else {
                 String::from_utf8(slice::from_raw_parts(credential.blob, size).to_vec())
                     .map(Some)
-                    .map_err(|_| "Некорректная кодировка ключа API".into())
+                    .map_err(|_| "Invalid API key encoding".into())
             };
             CredFree(value.cast());
             result
@@ -95,7 +95,7 @@ mod platform {
         let name: Vec<u16> = target.encode_utf16().chain([0]).collect();
         if let Some(key) = key.filter(|key| !key.is_empty()) {
             if key.len() > MAX_BLOB || key.chars().any(char::is_control) {
-                return Err("Некорректный ключ API".into());
+                return Err("Invalid API key".into());
             }
             let value = Credential {
                 flags: 0,
@@ -123,11 +123,11 @@ mod platform {
             return if error.raw_os_error() == Some(NOT_FOUND) {
                 Ok(())
             } else {
-                Err(format!("Диспетчер учётных данных Windows: {error}"))
+                Err(format!("Windows Credential Manager: {error}"))
             };
         }
         Err(format!(
-            "Диспетчер учётных данных Windows: {}",
+            "Windows Credential Manager: {}",
             io::Error::last_os_error()
         ))
     }
@@ -143,7 +143,7 @@ mod platform {
 
     pub fn store(_: &str, key: Option<&str>) -> Result<()> {
         if key.is_some() {
-            return Err("Сохранение ключей доступно в Windows".into());
+            return Err("Key storage is available on Windows".into());
         }
         Ok(())
     }

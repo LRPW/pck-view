@@ -1,16 +1,33 @@
-import {forwardRef, useEffect, useImperativeHandle, useRef} from 'react';
-import {basicSetup} from 'codemirror';
-import {Compartment, EditorState} from '@codemirror/state';
-import {EditorView} from '@codemirror/view';
-import {xml} from '@codemirror/lang-xml';
-import {json} from '@codemirror/lang-json';
+import {getShortcuts, shortcutFromEvent} from '../../app/shortcuts';
+import {
+    findNext,
+    findPrevious,
+    gotoLine,
+    openSearchPanel,
+    replaceAll,
+    replaceNext,
+    search,
+    selectMatches,
+    selectNextOccurrence
+} from '@codemirror/search';
+import {redo, undo} from '@codemirror/commands';
+import {foldCode, StreamLanguage, unfoldCode} from '@codemirror/language';
+import {t} from "../../i18n";
+import {createPortal} from 'react-dom';
+import {EditorSearchPanel} from './EditorSearchPanel';
+import {Box} from "@chakra-ui/react";
 import {javascript} from '@codemirror/lang-javascript';
-import {StreamLanguage} from '@codemirror/language';
+import {json} from '@codemirror/lang-json';
+import {xml} from '@codemirror/lang-xml';
 import {lua} from '@codemirror/legacy-modes/mode/lua';
 import {properties} from '@codemirror/legacy-modes/mode/properties';
+import {Compartment, EditorState, Prec} from '@codemirror/state';
 import {oneDark} from '@codemirror/theme-one-dark';
+import {EditorView} from '@codemirror/view';
+import {basicSetup} from 'codemirror';
+import {forwardRef, useEffect, useImperativeHandle, useRef, useState} from 'react';
 
-export type TextEditorHandle = { reveal: (from: number, to: number) => void };
+export type TextEditorHandle = { reveal: (from: number, to: number, focus?: boolean) => void };
 
 function language(name: string) {
     const ext = name.split('.').pop()?.toLowerCase();
@@ -31,6 +48,7 @@ export const TextEditor = forwardRef<TextEditorHandle, {
     readOnly: boolean;
     onChange: (value: string) => void
 }>(function TextEditor({value, fileName, readOnly, onChange}, ref) {
+    const [panel, setPanel] = useState<{ dom: HTMLElement; editor: EditorView; revision: number } | null>(null);
     const host = useRef<HTMLDivElement>(null);
     const view = useRef<EditorView | null>(null);
     const callback = useRef(onChange);
@@ -39,7 +57,7 @@ export const TextEditor = forwardRef<TextEditorHandle, {
     const editableSlot = useRef(new Compartment());
     const externalUpdate = useRef(false);
     useImperativeHandle(ref, () => ({
-        reveal(from, to) {
+        reveal(from, to, focus = true) {
             const editor = view.current;
             if (!editor) return;
             const start = Math.max(0, Math.min(from, editor.state.doc.length));
@@ -48,7 +66,7 @@ export const TextEditor = forwardRef<TextEditorHandle, {
                 selection: {anchor: start, head: end},
                 effects: EditorView.scrollIntoView(start, {y: 'center'})
             });
-            editor.focus();
+            if (focus) editor.focus();
         }
     }), []);
     useEffect(() => {
@@ -56,7 +74,55 @@ export const TextEditor = forwardRef<TextEditorHandle, {
         const editor = new EditorView({
             parent: host.current, state: EditorState.create({
                 doc: value, extensions: [
+                    search({
+                        top: true, createPanel: editor => {
+                            const dom = document.createElement('div');
+                            return {
+                                dom, mount() {
+                                    setPanel({dom, editor, revision: 0});
+                                },
+                                update() {
+                                    setPanel(current => current ? {
+                                        ...current,
+                                        revision: current.revision + 1
+                                    } : current);
+                                },
+                                destroy() {
+                                    setPanel(null);
+                                }
+                            };
+                        }
+                    }),
                     basicSetup, oneDark,
+                    Prec.highest(EditorView.domEventHandlers({
+                        keydown(event, editor) {
+                            const commands = {
+                                find: openSearchPanel,
+                                replace: openSearchPanel,
+                                next: findNext,
+                                previous: findPrevious,
+                                replaceNext,
+                                replaceAll,
+                                gotoLine,
+                                selectMatches,
+                                selectNext: selectNextOccurrence,
+                                undo,
+                                redo,
+                                fold: foldCode,
+                                unfold: unfoldCode
+                            };
+                            const bindings = getShortcuts(), pressed = shortcutFromEvent(event);
+                            for (const [action, command] of Object.entries(commands)) {
+                                if (bindings[action as keyof typeof bindings] === pressed) {
+                                    event.preventDefault();
+                                    command(editor);
+                                    return true;
+                                }
+                            }
+                            // Suppress the old configurable CodeMirror bindings after reassignment.
+                            return ['Ctrl+F', 'Ctrl+H', 'Ctrl+G', 'Ctrl+D', 'Ctrl+Shift+L', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+Z', 'F3', 'Shift+F3', 'Ctrl+Alt+BracketLeft', 'Ctrl+Alt+BracketRight'].includes(pressed);
+                        }
+                    })),
                     languageSlot.current.of(language(fileName)),
                     editableSlot.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
                     EditorState.tabSize.of(4),
@@ -97,5 +163,7 @@ export const TextEditor = forwardRef<TextEditorHandle, {
     useEffect(() => {
         view.current?.dispatch({effects: editableSlot.current.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)])});
     }, [readOnly]);
-    return <div className="code-editor" ref={host} aria-label={`Текстовый редактор: ${fileName}`}/>;
+    return <><Box className="code-editor" ref={host}
+                  aria-label={t("Text editor: {value0}", {value0: fileName})}/>{panel && createPortal(<EditorSearchPanel
+        editor={panel.editor}/>, panel.dom)}</>;
 });

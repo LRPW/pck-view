@@ -3,7 +3,7 @@
     flex: 1;
     min-height: 0;
     flex-direction: column;
-    color: #e2e8f0;
+    color: var(--chakra-colors-fg);
 }
 
 .locale-editor header, .locale-editor footer, .locale-editor form {
@@ -18,7 +18,7 @@
 
 .locale-editor header {
     flex-wrap: wrap;
-    border-bottom: 1px solid #253044;
+    border-bottom: 1px solid var(--chakra-colors-border);
 }
 
 .locale-editor form input {
@@ -41,7 +41,7 @@
     display: grid;
     gap: 6px;
     padding: 8px;
-    border-bottom: 1px solid #253044;
+    border-bottom: 1px solid var(--chakra-colors-border);
 }
 
 .locale-row {
@@ -57,7 +57,7 @@
 }
 
 .locale-row > code, .locale-editor footer > code {
-    color: #98afc3;
+    color: var(--chakra-colors-fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -77,16 +77,30 @@
 
 .locale-editor textarea {
     color: inherit;
-    background: #101b29;
+    background: var(--chakra-colors-bg);
 }
 
 .locale-apply-errors {
     padding: 8px;
     max-height: 150px;
     overflow: auto;
-    color: #dcb879;
+    color: var(--chakra-colors-orange-fg);
 }
 
-.locale-row > button { justify-self: start; }
-.locale-suggestion { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border: 1px solid #34465e; }
-.locale-suggestion > div { width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.locale-row > button {
+    justify-self: start;
+}
+
+.locale-suggestion {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--chakra-colors-border);
+}
+
+.locale-suggestion > div {
+    width: 100%;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}

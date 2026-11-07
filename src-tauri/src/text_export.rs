@@ -68,7 +68,7 @@ fn translatable(parts: &[Segment<'_>]) -> bool {
         && !(text.contains(['/', '\\']) && !text.contains(char::is_whitespace))
 }
 
-fn territory_texts(
+pub(super) fn territory_texts(
     bytes: &[u8],
     nations: bool,
     emit: &mut dyn FnMut(String, usize, &str) -> Result<()>,
@@ -77,8 +77,8 @@ fn territory_texts(
     fn take<'a>(bytes: &'a [u8], pos: &mut usize, len: usize) -> Result<&'a [u8]> {
         let end = pos
             .checked_add(len)
-            .ok_or("Неверный размер файла территорий")?;
-        let slice = bytes.get(*pos..end).ok_or("Файл территорий обрезан")?;
+            .ok_or("Invalid territory file size")?;
+        let slice = bytes.get(*pos..end).ok_or("Truncated territory file")?;
         *pos = end;
         Ok(slice)
     }
@@ -103,7 +103,7 @@ fn territory_texts(
             let count = number(bytes, &mut pos)? as usize;
             let size = count
                 .checked_mul(stride)
-                .ok_or("Неверный размер блока территории")?;
+                .ok_or("Invalid territory block size")?;
             take(bytes, &mut pos, size)?;
         }
         emit(
@@ -126,7 +126,7 @@ pub(super) fn translate_territories(
             let units: Vec<_> = value.encode_utf16().collect();
             if units.len() > 15 || units.contains(&0) {
                 return Err(format!(
-                    "{path}: название должно помещаться в 15 кодовых единиц UTF-16"
+                    "{path}: name must fit in 15 UTF-16 code units"
                 ));
             }
             let field = &mut updated[offset..offset + 32];
@@ -258,7 +258,7 @@ pub(super) fn translate_text_file(
         let Some(value) = replace(&path, old)? else {
             return Ok(());
         };
-        let invalid = || format!("{path}: перевод содержит недопустимый разделитель");
+        let invalid = || format!("{path}: translation contains an invalid separator");
         let value = match mode {
             TextMode::Xml => {
                 static AMP: OnceLock<Regex> = OnceLock::new();
@@ -314,114 +314,125 @@ pub async fn ide_export_texts(
 ) -> Result<ExportResult> {
     let scope = state.scope(id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let source = scope.path()?;
-        let target = super::locales::paths(&scope, "source")?;
-        let parent = target
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-            .ok_or("Нет папки назначения")?;
-        let mut file = tempfile::NamedTempFile::new_in(parent).map_err(err)?;
-        let mut out = BufWriter::new(file.as_file_mut());
-        write!(
-            out,
-            "{{\"version\":1,\"source\":{},\"entries\":[\n",
-            serde_json::to_string(&source).map_err(err)?
-        )
-        .map_err(err)?;
-        let mut errors = Vec::new();
-        let mut count = 0;
-        let total = scope.entries.len();
-        let mut last_report = None;
-        for (index, entry) in scope.entries.iter().enumerate() {
-            let basename = entry
-                .name
-                .rsplit(['/', '\\'])
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            let task = matches!(basename.as_str(), "tasks.data" | "dyn_tasks.data");
-            let elements = (basename.starts_with("elements") || basename.starts_with("gshop"))
-                && basename.ends_with(".data");
-            let territory = matches!(
-                basename.as_str(),
-                "domain.data" | "domain2.data" | "domain2_cross.data"
-            );
-            let plain = basename.ends_with(".txt") || basename.ends_with(".xml");
-            if !(task || elements || territory || plain) {
-                continue;
-            }
-            if last_report.map_or(true, |last: std::time::Instant| {
-                last.elapsed().as_millis() >= 100
-            }) {
-                report(&app, "Экспорт текстов", &entry.name, index, total);
-                last_report = Some(std::time::Instant::now());
-            }
-            let mut output_error = None;
-            let mut emit = |path: String, text: &str| -> Result<()> {
-                let segments = segments(text);
-                if !translatable(&segments) {
-                    return Ok(());
-                }
-                let write_entry = || -> Result<()> {
-                    if count != 0 {
-                        out.write_all(b",\n").map_err(err)?;
-                    }
-                    serde_json::to_writer(
-                        &mut out,
-                        &TextEntry {
-                            file: &entry.path,
-                            path,
-                            segments,
-                        },
-                    )
-                    .map_err(err)?;
-                    count += 1;
-                    Ok(())
-                };
-                let result = write_entry();
-                if let Err(error) = &result {
-                    output_error = Some(error.clone());
-                }
-                result
-            };
-            let result = ide::read(&scope, index).and_then(|bytes| {
-                if task {
-                    tasks::export_texts(&scope, index, &bytes, &mut emit)
-                } else if elements {
-                    elements::export_texts(&entry.name, bytes, &mut emit)
-                } else if territory {
-                    territory_texts(&bytes, basename != "domain.data", &mut |path, _, text| {
-                        emit(path, text)
-                    })
-                } else {
-                    text_file(&bytes, basename.ends_with(".xml"), &mut emit)
-                }
-            });
-            if let Some(error) = output_error {
-                return Err(error);
-            }
-            if let Err(error) = result {
-                errors.push(ExportError {
-                    file: entry.path.clone(),
-                    error,
-                });
-            }
-        }
-        out.write_all(b"\n],\"errors\":").map_err(err)?;
-        serde_json::to_writer(&mut out, &errors).map_err(err)?;
-        out.write_all(b"}\n").map_err(err)?;
-        out.flush().map_err(err)?;
-        drop(out);
-        file.as_file().sync_all().map_err(err)?;
-        file.persist(&target).map_err(err)?;
-        super::locales::invalidate(&target);
-        report(&app, "Экспорт текстов", "Готово", total, total);
-        Ok(ExportResult {
-            count,
-            skipped: errors.len(),
-            path: target.to_string_lossy().into_owned(),
+        export_impl(&scope, &|name, index, total| {
+            report(&app, "Export texts", name, index, total);
         })
     })
     .await
     .map_err(err)?
+}
+
+pub(super) fn export_impl(
+    scope: &ide::Scope,
+    progress: &dyn Fn(&str, usize, usize),
+) -> Result<ExportResult> {
+    let source = scope.path()?;
+    let (_, elements_profile) = scope.manifest().map(super::project::data_profiles)
+        .transpose()?.unwrap_or_default();
+    let target = super::locales::paths(&scope, "source")?;
+    let parent = target
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or("Destination folder is missing")?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(err)?;
+    let mut out = BufWriter::new(file.as_file_mut());
+    write!(
+        out,
+        "{{\"version\":1,\"source\":{},\"entries\":[\n",
+        serde_json::to_string(&source).map_err(err)?
+    )
+    .map_err(err)?;
+    let mut errors = Vec::new();
+    let mut count = 0;
+    let total = scope.entries.len();
+    let mut last_report = None;
+    for (index, entry) in scope.entries.iter().enumerate() {
+        let basename = entry
+            .name
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let task = matches!(basename.as_str(), "tasks.data" | "dyn_tasks.data");
+        let elements = (basename.starts_with("elements") || basename.starts_with("gshop"))
+            && basename.ends_with(".data");
+        let territory = matches!(
+            basename.as_str(),
+            "domain.data" | "domain2.data" | "domain2_cross.data"
+        );
+        let plain = basename.ends_with(".txt") || basename.ends_with(".xml");
+        if !(task || elements || territory || plain) {
+            continue;
+        }
+        if last_report.map_or(true, |last: std::time::Instant| {
+            last.elapsed().as_millis() >= 100
+        }) {
+            progress(&entry.name, index, total);
+            last_report = Some(std::time::Instant::now());
+        }
+        let mut output_error = None;
+        let mut emit = |path: String, text: &str| -> Result<()> {
+            let segments = segments(text);
+            if !translatable(&segments) {
+                return Ok(());
+            }
+            let write_entry = || -> Result<()> {
+                if count != 0 {
+                    out.write_all(b",\n").map_err(err)?;
+                }
+                serde_json::to_writer(
+                    &mut out,
+                    &TextEntry {
+                        file: &entry.path,
+                        path,
+                        segments,
+                    },
+                )
+                .map_err(err)?;
+                count += 1;
+                Ok(())
+            };
+            let result = write_entry();
+            if let Err(error) = &result {
+                output_error = Some(error.clone());
+            }
+            result
+        };
+        let result = ide::read(&scope, index).and_then(|bytes| {
+            if task {
+                tasks::export_texts(&scope, index, &bytes, &mut emit)
+            } else if elements {
+                elements::export_texts(&entry.name, bytes, elements_profile.as_ref(), &mut emit)
+            } else if territory {
+                territory_texts(&bytes, basename != "domain.data", &mut |path, _, text| {
+                    emit(path, text)
+                })
+            } else {
+                text_file(&bytes, basename.ends_with(".xml"), &mut emit)
+            }
+        });
+        if let Some(error) = output_error {
+            return Err(error);
+        }
+        if let Err(error) = result {
+            errors.push(ExportError {
+                file: entry.path.clone(),
+                error,
+            });
+        }
+    }
+    out.write_all(b"\n],\"errors\":").map_err(err)?;
+    serde_json::to_writer(&mut out, &errors).map_err(err)?;
+    out.write_all(b"}\n").map_err(err)?;
+    out.flush().map_err(err)?;
+    drop(out);
+    file.as_file().sync_all().map_err(err)?;
+    file.persist(&target).map_err(err)?;
+    super::locales::invalidate(&target);
+    progress("Done", total, total);
+    Ok(ExportResult {
+        count,
+        skipped: errors.len(),
+        path: target.to_string_lossy().into_owned(),
+    })
 }

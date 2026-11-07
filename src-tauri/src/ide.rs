@@ -42,7 +42,7 @@ impl Scope {
     pub(super) fn path(&self) -> Result<String> {
         match &self.source {
             Source::Project(path) => Ok(path.clone()),
-            Source::Archive(archive, _) => Ok(archive.0.lock().map_err(err)?.as_ref().ok_or("Нет архива")?.path.to_string_lossy().into_owned()),
+            Source::Archive(archive, _) => Ok(archive.0.lock().map_err(err)?.as_ref().ok_or("No archive")?.path.to_string_lossy().into_owned()),
             Source::File(path) => Ok(path.to_string_lossy().into_owned()),
         }
     }
@@ -61,7 +61,7 @@ pub(super) fn ide_search_sources(state: tauri::State<'_, Ide>) -> Result<Vec<Sea
     let scopes = state.scopes.lock().map_err(err)?.clone();
     let mut sources = Vec::new();
     for (id, scope) in scopes {
-        if matches!(&scope.source, Source::File(_)) { continue; }
+        if matches!(&scope.source, Source::File(_)) && !scope.entries.iter().any(|entry| super::search_data::supported(&entry.name)) { continue; }
         let project = scope.manifest().is_some();
         let modules = if project {
             scope.entries.iter().filter_map(|entry| {
@@ -70,7 +70,7 @@ pub(super) fn ide_search_sources(state: tauri::State<'_, Ide>) -> Result<Vec<Sea
                     Some(format!("archives/{}", &relative[..end + 4]))
                 } else if entry.path.starts_with("data/") {
                     Some("data".into())
-                } else { None }
+                } else if entry.path.starts_with("server/") { Some("server".into()) } else { None }
             }).collect::<std::collections::BTreeSet<_>>().into_iter().collect()
         } else { vec![String::new()] };
         sources.push(SearchSource { id, path: scope.path()?, project, modules });
@@ -92,7 +92,7 @@ impl Ide {
             .map_err(err)?
             .get(&id)
             .cloned()
-            .ok_or("Документ закрыт".into())
+            .ok_or("Document is closed".into())
     }
     fn insert(&self, scope: Scope, path: String, kind: &str) -> Result<Opened> {
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
@@ -118,27 +118,12 @@ pub async fn ide_open(path: String, state: tauri::State<'_, Ide>, app: tauri::Ap
         .is_some_and(|e| e.eq_ignore_ascii_case("pck"));
     let scope = tauri::async_runtime::spawn_blocking(move || -> Result<Scope> {
         if is_project {
-            project::project_open(path.to_string_lossy().into())?;
-            let entries = project::catalog(&path.to_string_lossy(), &|stage, done, total| {
-                super::report(&app, "Открытие", stage, done, total);
-            })?
-                .into_iter()
-                .map(|e| Entry {
-                    name: e.name,
-                    path: e.path,
-                    size: e.size,
-                    changed: e.changed,
-                })
-                .collect();
-            let root = project::native_root(&path.to_string_lossy())?;
-            Ok(Scope {
-                source: Source::Project(path.to_string_lossy().into()),
-                entries: Arc::new(entries),
-                root,
+            project_scope(&path.to_string_lossy(), &|stage, done, total| {
+                super::report(&app, "Opening", stage, done, total);
             })
         } else if is_archive {
             let a = Archive::open_progress(path.clone(), &|stage, done, total| {
-                super::report(&app, "Открытие", stage, done, total);
+                super::report(&app, "Opening", stage, done, total);
             })?;
             let entries = a
                 .entries
@@ -156,12 +141,12 @@ pub async fn ide_open(path: String, state: tauri::State<'_, Ide>, app: tauri::Ap
                     SurfaceCache::default(),
                 ),
                 entries: Arc::new(entries),
-                root: path.parent().ok_or("Нет папки")?.into(),
+                root: path.parent().ok_or("No folder")?.into(),
             })
         } else {
             let name = path
                 .file_name()
-                .ok_or("Нет имени")?
+                .ok_or("No name")?
                 .to_string_lossy()
                 .to_string();
             Ok(Scope {
@@ -171,7 +156,7 @@ pub async fn ide_open(path: String, state: tauri::State<'_, Ide>, app: tauri::Ap
                     size: std::fs::metadata(&path).map_err(err)?.len(),
                     changed: false,
                 }]),
-                root: path.parent().ok_or("Нет папки")?.into(),
+                root: path.parent().ok_or("No folder")?.into(),
                 source: Source::File(path),
             })
         }
@@ -190,13 +175,25 @@ pub async fn ide_open(path: String, state: tauri::State<'_, Ide>, app: tauri::Ap
         },
     )
 }
+pub(super) fn project_scope(manifest: &str, progress: &dyn Fn(&str, usize, usize)) -> Result<Scope> {
+    project::project_open(manifest.into())?;
+    let entries = project::catalog(manifest, progress)?
+        .into_iter()
+        .map(|e| Entry {name: e.name, path: e.path, size: e.size, changed: e.changed})
+        .collect();
+    Ok(Scope {
+        source: Source::Project(manifest.into()),
+        entries: Arc::new(entries),
+        root: project::native_root(manifest)?,
+    })
+}
 fn original_path(p: &Path) -> String {
     p.to_string_lossy().into()
 }
 pub(super) fn read(scope: &Scope, index: usize) -> Result<Vec<u8>> {
-    let entry = scope.entries.get(index).ok_or("Нет файла")?;
+    let entry = scope.entries.get(index).ok_or("No file")?;
     if entry.size > 256 * 1024 * 1024 {
-        return Err("Лимит файла: 256 MiB".into());
+        return Err("File limit: 256 MiB".into());
     }
     match &scope.source {
         Source::Archive(app, _) => read_entry_impl(index, app),
@@ -205,7 +202,7 @@ pub(super) fn read(scope: &Scope, index: usize) -> Result<Vec<u8>> {
         }
         Source::File(path) => {
             if entry.size > 256 * 1024 * 1024 {
-                return Err("Лимит файла: 256 MiB".into());
+                return Err("File limit: 256 MiB".into());
             }
             std::fs::read(path).map_err(err)
         }
@@ -217,6 +214,14 @@ pub async fn ide_read(id: u64, index: usize, state: tauri::State<'_, Ide>) -> Re
     tauri::async_runtime::spawn_blocking(move || read(&scope, index))
         .await
         .map_err(err)?
+}
+#[tauri::command]
+pub async fn ide_read_binary(
+    id: u64,
+    index: usize,
+    state: tauri::State<'_, Ide>,
+) -> Result<tauri::ipc::Response> {
+    ide_read(id, index, state).await.map(tauri::ipc::Response::new)
 }
 fn normalized(s: &str) -> String {
     s.replace('\\', "/").trim_start_matches("./").to_lowercase()
@@ -245,7 +250,7 @@ pub(super) fn read_elements(scope: &Scope) -> Result<Vec<u8>> {
         _ => {
             let index = resolve(scope, "data/elements.data")
                 .or_else(|| resolve(scope, "elements.data"))
-                .ok_or("Нет elements.data в проекте")?;
+                .ok_or("The project has no elements.data")?;
             read(scope, index)
         }
     }
@@ -260,8 +265,8 @@ pub async fn ide_item_descriptions(id: u64, state: tauri::State<'_, Ide>) -> Res
             return Ok(tauri::ipc::Response::new(read(&scope,index)?));
         }
         let root = match &scope.source {
-            Source::Project(_) => return Err("В проекте нет configs/item_ext_desc.txt".into()),
-            Source::File(_) => scope.root.parent().ok_or("Нет каталога клиента")?,
+            Source::Project(_) => return Err("The project has no configs/item_ext_desc.txt".into()),
+            Source::File(_) => scope.root.parent().ok_or("Client directory is missing")?,
             Source::Archive(_, _) => &scope.root,
         };
         let loose = root.join(NAME);
@@ -275,7 +280,7 @@ pub async fn ide_item_descriptions(id: u64, state: tauri::State<'_, Ide>) -> Res
         let index = archive.entries.iter().position(|entry| {
             let name = normalized(&entry.name);
             name == NAME || name == "item_ext_desc.txt"
-        }).ok_or("В configs.pck нет item_ext_desc.txt")?;
+        }).ok_or("configs.pck has no item_ext_desc.txt")?;
         Ok(tauri::ipc::Response::new(archive.data(index)?))
     }).await.map_err(err)?
 }
@@ -284,7 +289,7 @@ pub(super) fn inventory_files(scope: Scope) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>
     let elements = read_elements(&scope)?;
     let read_atlas: Box<dyn Fn(&str) -> Result<Vec<u8>>> = match &scope.source {
         Source::File(_) => {
-            let client = scope.root.parent().ok_or("Нет папки клиента")?;
+            let client = scope.root.parent().ok_or("Client folder is missing")?;
             let archive = client.join("surfaces.pck");
             super::reject_link(&archive)?;
             let archive = Archive::open_progress(archive, &|_, _, _| {})?;
@@ -293,13 +298,13 @@ pub(super) fn inventory_files(scope: Scope) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>
                 let index = archive.entries.iter().position(|entry| {
                     let path = normalized(&entry.name);
                     path.strip_prefix("surfaces/").unwrap_or(&path) == requested
-                }).ok_or("Файл атласа не найден")?;
+                }).ok_or("Atlas file was not found")?;
                 archive.data(index)
             })
         }
         _ => {
             Box::new(move |name| {
-                let index = resolve(&scope, name).ok_or("Файл атласа не найден")?;
+                let index = resolve(&scope, name).ok_or("Atlas file was not found")?;
                 read(&scope, index)
             })
         }
@@ -310,7 +315,7 @@ pub(super) fn inventory_files(scope: Scope) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>
             return Ok((elements, list, texture));
         }
     }
-    Err("Атлас иконок инвентаря не найден".into())
+    Err("Inventory icon atlas was not found".into())
 }
 
 #[tauri::command]
@@ -327,7 +332,7 @@ pub async fn ide_resource(id: u64, name: String, state: tauri::State<'_, Ide>) -
                 super::reject_link(&scope.root.join(&path))?;
                 std::fs::read(scope.root.join(path)).map_err(err)
             }
-            _ => Err(format!("Ресурс не найден: {name}")),
+            _ => Err(format!("Resource not found: {name}")),
         }
     })
     .await
@@ -353,7 +358,7 @@ pub async fn ide_save(
 pub(super) fn read_binary(state: &Ide, id: u64, index: usize) -> Result<(String, Vec<u8>)> {
     let scope = state.scope(id)?;
     Ok((
-        scope.entries.get(index).ok_or("Нет файла")?.name.clone(),
+        scope.entries.get(index).ok_or("No file")?.name.clone(),
         read(&scope, index)?,
     ))
 }
@@ -377,22 +382,89 @@ pub async fn ide_save_domain(
     state: tauri::State<'_, Ide>,
 ) -> Result<()> {
     let scope = state.scope(id)?;
-    let entry = scope.entries.get(index).ok_or("Нет файла")?;
+    let entry = scope.entries.get(index).ok_or("No file")?;
     if !matches!(
         normalized(&entry.name).rsplit('/').next(),
         Some("domain.data" | "domain2.data" | "domain2_cross.data")
     ) {
-        return Err("Выберите файл территорий".into());
+        return Err("Select a territory file".into());
     }
     tauri::async_runtime::spawn_blocking(move || save_bytes(&scope, index, &original, bytes))
         .await
         .map_err(err)?
 }
 
+#[tauri::command]
+pub async fn ide_export_server_data(path: std::path::PathBuf, bytes: Vec<u8>) -> Result<()> {
+    if !path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("sev")) {
+        return Err("Select a file with the .sev extension".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || write_export(path, bytes))
+        .await
+        .map_err(err)?
+}
+
+pub(super) fn write_export(path: std::path::PathBuf, bytes: Vec<u8>) -> Result<()> {
+    use std::io::Write;
+
+    let directory = path.parent().filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or("Choose an export folder")?;
+    let mut temp = tempfile::NamedTempFile::new_in(directory).map_err(err)?;
+    temp.write_all(&bytes).map_err(err)?;
+    temp.as_file().sync_all().map_err(err)?;
+    temp.persist(path).map_err(err)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ide_save_aipolicy(
+    request: tauri::ipc::Request<'_>,
+    state: tauri::State<'_, Ide>,
+) -> Result<()> {
+    save_binary_request(request, state, &["aipolicy.data"]).await
+}
+
+#[tauri::command]
+pub async fn ide_save_server_records(
+    request: tauri::ipc::Request<'_>,
+    state: tauri::State<'_, Ide>,
+) -> Result<()> {
+    save_binary_request(request, state, &["extra_drops.sev", "npcgen.data", "path.sev", "wmgj.nmd"]).await
+}
+
+async fn save_binary_request(
+    request: tauri::ipc::Request<'_>,
+    state: tauri::State<'_, Ide>,
+    filenames: &[&str],
+) -> Result<()> {
+    let header = |name: &str| -> Result<u64> {
+        request.headers().get(name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse().ok())
+            .ok_or_else(|| format!("Invalid header {name}"))
+    };
+    let scope = state.scope(header("x-ide-id")?)?;
+    let index = usize::try_from(header("x-ide-index")?).map_err(err)?;
+    let original_size = usize::try_from(header("x-original-size")?).map_err(err)?;
+    let entry = scope.entries.get(index).ok_or("No file")?;
+    if !normalized(&entry.name).rsplit('/').next().is_some_and(|name| filenames.contains(&name)) {
+        return Err("Unexpected file format".into());
+    }
+    let tauri::ipc::InvokeBody::Raw(payload) = request.body() else {
+        return Err("Binary data is required".into());
+    };
+    let (original, bytes) = payload.split_at_checked(original_size)
+        .ok_or("Invalid original file size")?;
+    let (original, bytes) = (original.to_vec(), bytes.to_vec());
+    tauri::async_runtime::spawn_blocking(move || save_bytes(&scope, index, &original, bytes))
+        .await
+        .map_err(err)?
+}
+
 pub(super) fn save_bytes(scope: &Scope, index: usize, original: &[u8], b: Vec<u8>) -> Result<()> {
-    let entry = scope.entries.get(index).ok_or("Нет файла")?;
+    let entry = scope.entries.get(index).ok_or("No file")?;
     if read(&scope, index)? != original {
-        return Err("Файл изменён. Откройте его заново.".into());
+        return Err("File has changed. Reopen it.".into());
     }
     match &scope.source {
         Source::Archive(app, _) => {
@@ -427,15 +499,15 @@ pub async fn ide_save_archive(
 ) -> Result<()> {
     let scope = state.scope(id)?;
     let Source::Archive(archive, _) = scope.source else {
-        return Err("Это не PCK".into());
+        return Err("This is not a PCK".into());
     };
-    background(app, "Сохранение PCK", move |app| {
+    background(app, "Saving PCK", move |app| {
         let mut guard = archive.0.lock().map_err(err)?;
         let saved = guard
             .as_ref()
-            .ok_or("Нет архива")?
+            .ok_or("No archive")?
             .save_progress(Path::new(&path), &|s, d, t| {
-                super::report(&app, "Сохранение PCK", s, d, t)
+                super::report(&app, "Saving PCK", s, d, t)
             })?;
         *guard = Some(saved);
         Ok(())
@@ -512,7 +584,7 @@ pub async fn ide_font(
     let b = if let Some(i) = source.strip_prefix("entry:") {
         read(&s, i.parse().map_err(err)?)?
     } else {
-        let path = super::archive_relative(source.strip_prefix("disk:").ok_or("Нет шрифта")?)?;
+        let path = super::archive_relative(source.strip_prefix("disk:").ok_or("No font")?)?;
         std::fs::read(s.root.join(path)).map_err(err)?
     };
     Ok(tauri::ipc::Response::new(b))
@@ -595,4 +667,149 @@ mod tests {
             }
         }
     }
+}
+
+#[tauri::command]
+pub async fn ide_import_server(id: u64, source: String, state: tauri::State<'_, Ide>) -> Result<Opened> {
+    let scope = state.scope(id)?;
+    let manifest = scope.manifest().ok_or("Open a project")?.to_string();
+    let path = manifest.clone();
+    let mut updated = tauri::async_runtime::spawn_blocking(move || {
+        project::import_server(&manifest, std::path::Path::new(&source))?;
+        project_scope(&manifest, &|_, _, _| {})
+    }).await.map_err(err)??;
+    // Keep entry indices stable for tabs that are already open.
+    let old_paths: std::collections::HashSet<_> = scope.entries.iter().map(|entry| entry.path.as_str()).collect();
+    let mut entries = scope.entries.as_ref().clone();
+    entries.extend(updated.entries.iter().filter(|entry| !old_paths.contains(entry.path.as_str())).cloned());
+    updated.entries = Arc::new(entries.clone());
+    state.scopes.lock().map_err(err)?.insert(id, updated);
+    Ok(Opened {id, path, kind: "project".into(), entries})
+}
+
+#[tauri::command]
+pub async fn ide_search_preview(
+    structured: Option<bool>,
+    source: Option<String>,
+    path: String,
+    state: tauri::State<'_, Ide>,
+) -> Result<tauri::ipc::Response> {
+    let scope = if let Some(source) = source {
+        let scopes = state.scopes.lock().map_err(err)?;
+        Some(scopes.values().find(|scope| scope.path()
+            .is_ok_and(|value| normalized(&value) == normalized(&source)))
+            .cloned().ok_or("Reopen this source to preview its results")?)
+    } else {
+        None
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let structured = structured.unwrap_or(false);
+        let limit: u64 = if structured { 256 } else { 8 } * 1024 * 1024;
+        let elements_profile = if structured {
+            scope.as_ref().and_then(Scope::manifest)
+                .map(super::project::data_profiles).transpose()?.unwrap_or_default().1
+        } else {
+            None
+        };
+        let bytes = if let Some(scope) = scope {
+            let index = scope.entries.iter().position(|entry| normalized(&entry.path) == normalized(&path))
+                .ok_or("Search result is no longer available")?;
+            if scope.entries[index].size > limit {
+                return Err("Preview limit: 8 MiB. Open the file in the editor.".into());
+            }
+            read(&scope, index)?
+        } else {
+            let path = std::path::PathBuf::from(&path);
+            super::reject_link(&path)?;
+            let metadata = std::fs::metadata(&path).map_err(err)?;
+            if !metadata.is_file() || metadata.len() > limit {
+                return Err("Preview limit: 8 MiB. Open the file in the editor.".into());
+            }
+            std::fs::read(path).map_err(err)?
+        };
+        if bytes.len() as u64 > limit {
+            return Err("Preview limit: 8 MiB. Open the file in the editor.".into());
+        }
+        let bytes = if structured {
+            super::search_data::project(&path, bytes, elements_profile.as_ref(), &|| false)?.into_bytes()
+        } else {
+            bytes
+        };
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err("Preview limit: 8 MiB. Open the file in the editor.".into());
+        }
+        Ok(tauri::ipc::Response::new(bytes))
+    }).await.map_err(err)?
+}
+
+#[tauri::command]
+pub async fn ide_export_controller(path: std::path::PathBuf, text: String) -> Result<()> {
+    if !path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("h") || ext.eq_ignore_ascii_case("cpp")) {
+        return Err("Select a C++ header or source file".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || write_export(path, text.into_bytes())).await.map_err(err)?
+}
+
+#[derive(serde::Serialize)]
+pub struct InterfaceCompatibilityIssue {
+    path: String,
+    div: bool,
+    mono: bool,
+    error: Option<String>,
+}
+
+fn interface_extensions(xml: &str) -> Result<(bool, bool)> {
+    use quick_xml::{events::Event, Reader};
+    let mut reader = Reader::from_str(xml.trim_start_matches('\u{feff}').trim_end_matches('\0'));
+    let (mut div, mut mono) = (false, false);
+    loop {
+        match reader.read_event().map_err(err)? {
+            Event::Start(tag) | Event::Empty(tag) => {
+                div |= tag.local_name().as_ref().eq_ignore_ascii_case("div");
+                for attribute in tag.attributes() {
+                    let attribute = attribute.map_err(err)?;
+                    if attribute.key.as_ref().eq_ignore_ascii_case("fontname") {
+                        mono |= quick_xml::escape::unescape(&attribute.value).map_err(err)?.trim().eq_ignore_ascii_case("mono");
+                    }
+                }
+            }
+            Event::Eof => return Ok((div, mono)),
+            _ => {}
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn ide_check_interface_compatibility(
+    id: u64,
+    drafts: std::collections::HashMap<usize, String>,
+    state: tauri::State<'_, Ide>,
+) -> Result<Vec<InterfaceCompatibilityIssue>> {
+    let scope = state.scope(id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut issues = Vec::new();
+        for (index, entry) in scope.entries.iter().enumerate() {
+            if !entry.name.to_ascii_lowercase().ends_with(".xml") { continue; }
+            let result = match drafts.get(&index) {
+                Some(xml) => interface_extensions(xml),
+                None => read(&scope, index).and_then(|bytes| interface_extensions(&super::ide_search::decode(&bytes).0)),
+            };
+            let (div, mono, error) = match result {
+                Ok((false, false)) => continue,
+                Ok((div, mono)) => (div, mono, None),
+                Err(error) => (false, false, Some(error)),
+            };
+            issues.push(InterfaceCompatibilityIssue { path: entry.path.clone(), div, mono, error });
+        }
+        issues.sort_by(|a, b| a.path.cmp(&b.path));
+        issues
+    }).await.map_err(err)
+}
+
+#[cfg(test)]
+#[test]
+fn compatibility_detects_extensions_in_markup() {
+    assert_eq!(interface_extensions(r#"<DIALOG><!-- <DIV/> --><Text FontName="text"/></DIALOG>"#).unwrap(), (false, false));
+    assert_eq!(interface_extensions(r#"<DIALOG><div><Text FONTNAME="M&#111;NO"/></div></DIALOG>"#).unwrap(), (true, true));
+    assert!(interface_extensions("<DIALOG><DIV></DIALOG>").is_err());
 }
